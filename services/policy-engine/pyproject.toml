@@ -1,18 +1,12 @@
 [project]
-name = "at-api-gateway"
+name = "at-policy-engine"
 version = "0.1.0"
-description = "AgentThreshold API Gateway: authN/authZ, rate limiting, routing"
+description = "AgentThreshold Policy Engine: deterministic policy evaluation (fail-closed)"
 requires-python = ">=3.12"
 dependencies = [
     "at-shared>=0.1.0",
-    "at-policy-engine>=0.1.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
-    "python-multipart>=0.0.9",
-    "email-validator>=2.2.0",
-    "redis>=5.0.0",
-    "pydantic>=2.8.0",
-    "pydantic-settings>=2.4.0",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +20,7 @@ package = true
 
 [tool.uv.sources]
 at-shared = { workspace = true }
-at-policy-engine = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]

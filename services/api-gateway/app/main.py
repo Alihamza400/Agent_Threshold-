@@ -15,7 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.routers import agents, api_keys, auth, orgs
+from app.rate_limit import rate_limit_middleware
+from app.routers import agents, api_keys, auth, orgs, transactions
 
 settings = get_settings()
 
@@ -44,6 +45,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.middleware("http")(rate_limit_middleware(app))
 
 
 # --------------------------------------------------------------------------
@@ -85,3 +87,4 @@ app.include_router(auth.router)
 app.include_router(orgs.router)
 app.include_router(agents.router)
 app.include_router(api_keys.router)
+app.include_router(transactions.router)
