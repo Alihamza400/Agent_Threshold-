@@ -1,0 +1,27 @@
+[project]
+name = "at-screening-agents"
+version = "0.1.0"
+description = "AgentThreshold screening AI agents: intent classifier, simulation interpreter, escalation drafter"
+requires-python = ">=3.12"
+dependencies = [
+    "at-shared>=0.1.0",
+    "pydantic>=2.8.0",
+]
+
+[project.optional-dependencies]
+anthropic = [
+    "anthropic>=0.40.0",
+]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+at-shared = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

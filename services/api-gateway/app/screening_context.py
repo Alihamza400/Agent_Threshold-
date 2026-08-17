@@ -5,37 +5,62 @@ Builds an EngineContext with:
   - recent tx count in the rate window
   - known counterparties (last 90 days)
 
-Fail-closed: DB errors raise, so the orchestrator rejects the request rather
-than screening without complete context.
+Plus an AnomalyResult (FR-AI-02) computed against the agent's rolling
+baseline. Fail-closed: DB errors raise, so the orchestrator rejects the
+request rather than screening without complete context.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from anomaly_scorer.baseline import BaselineFeatures
+from anomaly_scorer.scorer import AnomalyResult, score_transaction
 from at_shared.models import Transaction
 from policy_engine.engine import EngineContext
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+
+from app.baseline_service import get_or_compute_baseline
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def build_engine_context(
+class ScreeningContext:
+    """Aggregated runtime context for a single screening request."""
+
+    def __init__(
+        self,
+        engine_ctx: EngineContext,
+        anomaly: AnomalyResult | None,
+        baseline: BaselineFeatures | None,
+        is_new_counterparty: bool,
+    ):
+        self.engine_ctx = engine_ctx
+        self.anomaly = anomaly
+        self.baseline = baseline
+        self.is_new_counterparty = is_new_counterparty
+
+    @property
+    def anomaly_score(self) -> float:
+        return self.anomaly.score if self.anomaly else 0.0
+
+
+def build_screening_context(
     db: Session,
     agent_id: str,
+    to_address: str | None,
+    value_wei: int,
     usd_value: float | None = None,
-    anomaly_score: float | None = None,
-) -> EngineContext:
-    """Compute rolling behavioral inputs for the policy engine."""
+) -> ScreeningContext:
+    """Compute rolling behavioral inputs + anomaly score for the request."""
     now = _now()
     day_ago = now - timedelta(days=1)
     window_minutes = now - timedelta(minutes=1)
     baseline_start = now - timedelta(days=90)
 
-    # Rolling 24h USD spend already used (approved/executed transactions).
     daily_used = db.scalar(
         select(func.coalesce(func.sum(Transaction.usd_value), 0.0)).where(
             Transaction.agent_id == agent_id,
@@ -45,7 +70,6 @@ def build_engine_context(
         )
     ) or 0.0
 
-    # Recent tx count in the rate window (any screened).
     recent_count = db.scalar(
         select(func.count(Transaction.id)).where(
             Transaction.agent_id == agent_id,
@@ -53,7 +77,6 @@ def build_engine_context(
         )
     ) or 0
 
-    # Known counterparties over the 90-day baseline.
     known_rows = db.execute(
         select(Transaction.to_address)
         .where(
@@ -63,15 +86,30 @@ def build_engine_context(
         )
         .distinct()
     ).scalars()
-
     known = frozenset(addr.lower() for addr in known_rows)
 
-    return EngineContext(
+    to = to_address.lower() if to_address else None
+    is_new = to is not None and to not in known
+
+    baseline = get_or_compute_baseline(db, agent_id)
+
+    anomaly: AnomalyResult | None = None
+    if baseline is not None:
+        anomaly = score_transaction(
+            baseline,
+            value_wei=value_wei,
+            to_address=to_address,
+            recent_tx_count=int(recent_count),
+            is_new_counterparty=is_new,
+        )
+
+    engine_ctx = EngineContext(
         usd_value=usd_value,
         daily_spend_used_usd=float(daily_used),
         recent_tx_count=int(recent_count),
         known_counterparties=known,
-        anomaly_score=anomaly_score,
+        anomaly_score=anomaly.score if anomaly else None,
         now_utc_minute=now.hour * 60 + now.minute,
         fail_closed=True,
     )
+    return ScreeningContext(engine_ctx, anomaly, baseline, is_new)

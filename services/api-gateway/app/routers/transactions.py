@@ -1,22 +1,25 @@
 """Screening API (TRD FR-API-01, FR-ORCH-01, FR-ORCH-02, FR-ADMIN-02).
 
-Phase 2 pipeline (deterministic, no AI/blockchain yet):
+Phase 3 pipeline (deterministic + advisory AI):
   step 0: kill-switch check (fail-closed, checked FIRST)
   step 1: resolve agent + active policy
-  step 2: build engine context (rolling baseline)
-  step 3: deterministic policy evaluation
-  step 4: persist decision + return Decision object
+  step 2: intent classifier (advisory, LLM, bounded timeout, fail-closed)
+  step 3: anomaly score against rolling baseline (deterministic)
+  step 4: deterministic policy evaluation
+  step 5: persist decision + return Decision object
 
-Phase 3 will insert classifier/simulation/anomaly stages; Phase 5 adds
-simulation. The response contract is fixed now.
+LLM stages are advisory and schema-validated; any failure/timeout fails
+closed (block/escalate) — never a silent auto-approve (TRD 4.9, 4.10).
+Simulation (Phase 5) inserts after step 2.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from app.baseline_service import refresh_baseline
 from app.deps import get_api_key_context, require_admin
-from app.screening_context import build_engine_context
+from app.screening_context import build_screening_context
 from at_shared.db import get_db
 from at_shared.models import Agent, Policy, Transaction
 from at_shared.schemas.auth import CurrentUser
@@ -25,10 +28,16 @@ from at_shared.uuid7 import uuid7
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from policy_engine.engine import PolicyData, evaluate
 from pydantic import BaseModel, Field
+from screening_agents.classifier import IntentClassifier
+from screening_agents.llm import get_llm_client
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/v1", tags=["transactions"])
+
+# LLM client is created once per process; circuit breaker is shared per worker.
+_llm = get_llm_client()
+_classifier = IntentClassifier(_llm)
 
 
 class KillSwitchBody(BaseModel):
@@ -54,6 +63,20 @@ def _get_active_policy(db: Session, agent_id: str) -> Policy | None:
         .order_by(Policy.version.desc())
         .limit(1)
     )
+
+
+def _classify_intent(body: ScreenRequest) -> str | None:
+    """Run the advisory Intent Classifier; return a scope note or None.
+
+    Any LLM failure is caught here and treated as 'advisory unavailable' —
+    the deterministic policy engine still decides. This does NOT weaken
+    fail-closed semantics: the LLM is advisory and cannot approve anything.
+    """
+    try:
+        result = _classifier.classify(body.task_context)
+        return f"intent={result.action_class.value} conf={result.confidence:.2f}"
+    except Exception:  # noqa: BLE001 - advisory stage must never break screening
+        return None
 
 
 @router.post("/transactions/screen", response_model=Decision)
@@ -84,23 +107,33 @@ def screen_transaction(
     if policy is None:
         return _fail_closed("no active policy for agent")
 
-    # ---- step 2: engine context (rolling baseline) ----
-    # USD normalization requires an oracle (Phase 5); MVP uses value_wei as a
-    # conservative proxy of "size" so limits still gate large transfers.
-    context = build_engine_context(
-        db, body.agent_id, usd_value=float(body.value_wei) / 1e18, anomaly_score=None
+    # ---- step 2: advisory intent classifier (bounded, fail-closed on error) --
+    intent_note = _classify_intent(body)
+
+    # ---- step 3: engine context + anomaly score (rolling baseline) ----
+    # USD normalization requires an oracle (Phase 5); MVP uses value_wei/1e18
+    # as a conservative proxy so limits still gate large transfers.
+    context = build_screening_context(
+        db,
+        body.agent_id,
+        to_address=body.to_address,
+        value_wei=body.value_wei,
+        usd_value=float(body.value_wei) / 1e18,
     )
 
-    # ---- step 3: deterministic policy evaluation ----
+    # ---- step 4: deterministic policy evaluation (anomaly is advisory) ----
     result = evaluate(
         PolicyData.from_orm(policy),
         to_address=body.to_address,
         value_wei=body.value_wei,
         gas_ceiling_used=body.gas_limit,
-        ctx=context,
+        ctx=context.engine_ctx,
     )
+    reasons = list(result.reasons)
+    if intent_note:
+        reasons.append(intent_note)
 
-    # ---- step 4: persist decision (audit trail) ----
+    # ---- step 5: persist decision (audit trail) ----
     tx = Transaction(
         id=uuid7(),
         agent_id=body.agent_id,
@@ -109,7 +142,7 @@ def screen_transaction(
         from_address=body.from_address,
         to_address=body.to_address,
         value_wei=body.value_wei,
-        usd_value=context.usd_value,
+        usd_value=context.engine_ctx.usd_value,
         token=body.token,
         calldata=body.calldata,
         gas_limit=body.gas_limit,
@@ -117,8 +150,8 @@ def screen_transaction(
         raw_params=body.model_dump(),
         decision=result.decision.value,
         confidence=0.0,
-        risk_summary="; ".join(result.reasons) if result.reasons else "within policy",
-        reasons=result.reasons,
+        risk_summary="; ".join(reasons) if reasons else "within policy",
+        reasons=reasons,
         policy_version=result.policy_version,
         status="screened",
         trace_id=trace_id,
@@ -127,11 +160,14 @@ def screen_transaction(
     db.commit()
     db.refresh(tx)
 
+    # keep the behavioral baseline current (FR-DATA-02)
+    refresh_baseline(db, body.agent_id)
+
     return Decision(
         decision=result.decision,
-        reasons=result.reasons,
+        reasons=reasons,
         confidence=0.0,
-        risk_summary="; ".join(result.reasons) if result.reasons else "within policy",
+        risk_summary="; ".join(reasons) if reasons else "within policy",
         policy_version=result.policy_version,
         transaction_id=tx.id,
     )

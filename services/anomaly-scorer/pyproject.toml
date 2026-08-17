@@ -1,0 +1,23 @@
+[project]
+name = "at-anomaly-scorer"
+version = "0.1.0"
+description = "AgentThreshold Anomaly Scorer: rule-based v1 deviation scoring (deterministic)"
+requires-python = ">=3.12"
+dependencies = [
+    "at-shared>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+at-shared = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
