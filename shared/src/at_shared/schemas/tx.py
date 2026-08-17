@@ -86,4 +86,5 @@ class TransactionRead(OrmModel):
     reasons: list[str]
     policy_version: int | None
     status: str
+    screened_ms: int | None = None
     created_at: datetime

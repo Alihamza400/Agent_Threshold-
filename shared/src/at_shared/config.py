@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str = "admin@agentthreshold.dev"
     bootstrap_admin_password: str = "ChangeMe_Str0ng!"
 
+    # CORS (dashboard SPA). Comma-separated explicit origins; empty means
+    # permissive in development and locked-down (none) in production.
+    cors_origins: str = ""
+
+    # Unresolved escalations expire after this many minutes and default to
+    # reject (fail-closed human review queue).
+    escalation_ttl_minutes: int = 60
+
     # Blockchain (Phase 5)
     # Primary + fallback RPC endpoints per chain, comma-separated if more.
     eth_rpc_url: str = ""

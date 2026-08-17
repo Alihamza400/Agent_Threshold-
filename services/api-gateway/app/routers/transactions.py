@@ -15,17 +15,20 @@ Simulation (Phase 5) inserts after step 2.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import time
+from datetime import UTC, datetime, timedelta
 
 from app.baseline_service import refresh_baseline
-from app.deps import get_api_key_context, require_admin
+from app.deps import get_api_key_context, require_admin, require_auditor_or_above
 from app.screening_context import build_screening_context
+from at_shared.audit_events import audit_leaf, write_audit_record
+from at_shared.config import get_settings
 from at_shared.db import get_db
-from at_shared.models import Agent, Policy, Transaction
+from at_shared.models import Agent, Approval, Policy, Transaction
 from at_shared.schemas.auth import CurrentUser
 from at_shared.schemas.tx import Decision, DecisionType, ScreenRequest, TransactionRead
 from at_shared.uuid7 import uuid7
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from policy_engine.engine import PolicyData, evaluate
 from pydantic import BaseModel, Field
 from screening_agents.classifier import IntentClassifier
@@ -87,6 +90,7 @@ def screen_transaction(
     api_ctx: dict = Depends(get_api_key_context),
 ) -> Decision:
     trace_id = request.headers.get("x-trace-id") or uuid7()
+    started = time.monotonic()
 
     # ---- step 0: kill-switch (FR-ADMIN-02) — checked first, fail-closed ----
     agent = db.scalar(select(Agent).where(Agent.id == body.agent_id))
@@ -155,8 +159,59 @@ def screen_transaction(
         policy_version=result.policy_version,
         status="screened",
         trace_id=trace_id,
+        screened_ms=int((time.monotonic() - started) * 1000),
     )
     db.add(tx)
+    db.flush()
+
+    # ---- step 6: immutable audit leaf + escalation queue (FR-AUDIT-01) ----
+    leaf = audit_leaf(
+        "decision",
+        api_ctx["org_id"],
+        body.agent_id,
+        tx.id,
+        result.decision.value,
+        body.value_wei,
+        body.to_address or "",
+        result.policy_version,
+    )
+    write_audit_record(
+        db,
+        org_id=api_ctx["org_id"],
+        agent_id=body.agent_id,
+        transaction_id=tx.id,
+        event_type="decision",
+        details={
+            "transaction_id": tx.id,
+            "decision": result.decision.value,
+            "to_address": body.to_address,
+            "from_address": body.from_address,
+            "value_wei": body.value_wei,
+            "chain_id": body.chain_id.value,
+            "policy_version": result.policy_version,
+            "agent_name": agent.name,
+        },
+        leaf=leaf,
+    )
+
+    # Human-in-the-loop: escalate -> pending approval, expires to reject.
+    if result.decision is DecisionType.ESCALATE:
+        db.add(
+            Approval(
+                id=uuid7(),
+                org_id=api_ctx["org_id"],
+                agent_id=body.agent_id,
+                transaction_id=tx.id,
+                decision="escalate",
+                status="pending",
+                reasons=reasons,
+                risk_summary="; ".join(reasons) if reasons else "flagged for review",
+                confidence=0.0,
+                expires_at=datetime.now(UTC)
+                + timedelta(minutes=get_settings().escalation_ttl_minutes),
+            )
+        )
+
     db.commit()
     db.refresh(tx)
 
@@ -202,6 +257,34 @@ def agent_history(
 
 
 # --------------------------------------------------------------------------
+# Dashboard / auditor reads (JWT, org-scoped)
+# --------------------------------------------------------------------------
+@router.get("/transactions", response_model=list[TransactionRead])
+def list_transactions(
+    agent_id: str | None = None,
+    decision: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_auditor_or_above),
+) -> list[TransactionRead]:
+    """Org-wide transaction search for the dashboard (auditor and above)."""
+    if decision is not None and decision not in {"approve", "reject", "escalate"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid decision filter")
+    stmt = select(Transaction).where(Transaction.org_id == user.org_id)
+    if agent_id:
+        stmt = stmt.where(Transaction.agent_id == agent_id)
+    if decision:
+        stmt = stmt.where(Transaction.decision == decision)
+    rows = db.scalars(
+        stmt.order_by(Transaction.created_at.desc())
+        .offset(max(offset, 0))
+        .limit(min(max(limit, 1), 500))
+    ).all()
+    return [TransactionRead.model_validate(t) for t in rows]
+
+
+# --------------------------------------------------------------------------
 # Kill-switch (FR-ADMIN-02) — Admin only, SSO
 # --------------------------------------------------------------------------
 @router.post("/kill-switch")
@@ -233,3 +316,30 @@ def kill_switch(
 
     db.commit()
     return {"halted": True, "scope": scope, "effective_at": now.isoformat()}
+
+
+@router.delete("/kill-switch")
+def resume_kill_switch(
+    scope: str = Query(..., pattern=r"^(agent|org)$"),
+    agent_id: str | None = None,
+    db: Session = Depends(get_db),
+    admin: CurrentUser = Depends(require_admin),
+) -> dict:
+    """Clear the kill-switch (idempotent): resume an agent or the whole org."""
+    now = datetime.now(UTC)
+    if scope == "agent":
+        if not agent_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "agent_id required for agent scope")
+        agent = db.scalar(select(Agent).where(Agent.id == agent_id, Agent.org_id == admin.org_id))
+        if agent is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+        agents = [agent]
+    else:
+        agents = db.scalars(select(Agent).where(Agent.org_id == admin.org_id)).all()
+
+    for a in agents:
+        a.halted = False
+        a.halt_reason = None
+        a.halted_at = None
+    db.commit()
+    return {"halted": False, "scope": scope, "effective_at": now.isoformat()}

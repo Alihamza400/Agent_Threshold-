@@ -12,8 +12,9 @@ class AuditError(Exception):
     """Base class for audit/anchoring errors."""
 
 
-class MerkleError(AuditError):
-    """Invalid Merkle tree input (empty batch, wrong leaf length, ...)."""
+# Canonical MerkleError lives in at_shared.merkle (shared with the gateway);
+# re-exported here so `from audit_service.errors import MerkleError` still works.
+from at_shared.merkle import MerkleError  # noqa: E402, F401
 
 
 class AnchorConfigurationError(AuditError):

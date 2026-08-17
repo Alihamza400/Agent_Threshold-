@@ -82,6 +82,17 @@ def register_agent(
     )
 
 
+@router.get("", response_model=list[AgentRead])
+def list_agents(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_admin),
+) -> list[AgentRead]:
+    rows = db.scalars(
+        select(Agent).where(Agent.org_id == user.org_id).order_by(Agent.created_at.asc())
+    ).all()
+    return [AgentRead.model_validate(a) for a in rows]
+
+
 @router.get("/{agent_id}", response_model=AgentRead)
 def get_agent(
     agent_id: str,

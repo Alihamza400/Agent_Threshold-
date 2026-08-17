@@ -16,12 +16,24 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.rate_limit import rate_limit_middleware
-from app.routers import agents, api_keys, auth, orgs, transactions
+from app.routers import (
+    agents,
+    api_keys,
+    approvals,
+    audit,
+    auth,
+    metrics,
+    orgs,
+    policies,
+    transactions,
+)
 
 settings = get_settings()
 
-# CORS locked to configured origins in production; permissive in development
-_cors_origins = ["*"] if not settings.is_production else []
+# CORS: explicit configured origins (comma-separated) win; otherwise permissive
+# in development and locked down (none) in production.
+_configured_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+_cors_origins = _configured_origins or (["*"] if not settings.is_production else [])
 
 
 @asynccontextmanager
@@ -88,3 +100,7 @@ app.include_router(orgs.router)
 app.include_router(agents.router)
 app.include_router(api_keys.router)
 app.include_router(transactions.router)
+app.include_router(policies.router)
+app.include_router(approvals.router)
+app.include_router(audit.router)
+app.include_router(metrics.router)

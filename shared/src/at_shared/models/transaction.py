@@ -50,6 +50,8 @@ class Transaction(Base):
     policy_version: Mapped[int | None] = mapped_column()
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="screened")
     trace_id: Mapped[str | None] = mapped_column(String(64))
+    # wall-clock time spent in the screening pipeline (ms) — drives latency SLOs.
+    screened_ms: Mapped[int | None] = mapped_column()
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
