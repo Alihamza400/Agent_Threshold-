@@ -60,6 +60,26 @@ class Settings(BaseSettings):
     # RPC timeout (seconds) — fail-closed on slow providers.
     rpc_timeout_seconds: float = 5.0
 
+    # On-chain audit anchoring (Phase 6.6, FR-AUDIT-01).
+    # RPC endpoint the anchor worker submits through; the audit contract lives
+    # on the chain this endpoint serves. EIP-155 chain id for transaction
+    # signing (anvil defaults to 31337).
+    anchor_rpc_url: str = ""
+    anchor_chain_id: int = 31337
+    # AuditAnchor (proxy) address the service submits Merkle roots to.
+    anchor_contract_address: str = ""
+    # EOA that is an `isAuthorizedAnchor` on the contract. Loaded from a
+    # secret store (Vault/KMS) in production, never committed.
+    anchor_wallet_private_key: str = ""
+    # Batching cadence (6.6): flush every `anchor_batch_max_records` records
+    # or `anchor_batch_interval_seconds` whichever comes first.
+    anchor_batch_max_records: int = 1000
+    anchor_batch_interval_seconds: float = 900.0
+    # Confirmation depth and submission retry/backoff for the worker.
+    anchor_confirmations: int = 1
+    anchor_max_attempts: int = 5
+    anchor_backoff_base_seconds: float = 5.0
+
     @property
     def database_url(self) -> str:
         return (

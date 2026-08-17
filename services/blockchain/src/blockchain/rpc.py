@@ -117,6 +117,17 @@ class RPCClient:
     async def call_contract(self, tx: dict[str, Any]) -> str:
         return await self.call("eth_call", [tx, "latest"], cross_check=True)
 
+    async def send_raw_transaction(self, raw: str) -> str:
+        """Broadcast a signed raw transaction; returns the transaction hash.
+
+        Intentionally not cross-checked: `_NO_CROSS_CHECK` treats submission
+        as provider-specific (each node may accept/reject independently).
+        """
+        return await self.call("eth_sendRawTransaction", [raw])
+
+    async def get_transaction_receipt(self, tx_hash: str) -> dict[str, Any] | None:
+        return await self.call("eth_getTransactionReceipt", [tx_hash])
+
     async def debug_trace_call(self, tx: dict[str, Any]) -> Any:
         return await self.call(
             "debug_traceCall",
