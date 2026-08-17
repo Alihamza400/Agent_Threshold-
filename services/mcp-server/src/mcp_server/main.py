@@ -49,7 +49,7 @@ server = MCPServer(name="agentthreshold-mcp", version="0.1.0")
 # Tool surface (all read-only; allow-list enforced per call)
 # --------------------------------------------------------------------------
 @server.tool(name="simulate_transaction")
-def simulate_transaction_tool(
+async def simulate_transaction_tool(
     agent_id: str,
     chain_id: ChainId,
     from_address: str,
@@ -58,7 +58,7 @@ def simulate_transaction_tool(
     calldata: str | None,
 ) -> SimulationResult:
     assert_tool_allowed("simulate_transaction")
-    return simulate_transaction(
+    return await simulate_transaction(
         SimulateRequest(
             agent_id=agent_id,
             chain_id=chain_id,
@@ -104,7 +104,11 @@ async def _buffer_body(receive: Receive) -> tuple[bytes, Callable[[], Receive]]:
             if not sent:
                 sent = True
                 return {"type": "http.request", "body": body, "more_body": False}
-            return {"type": "http.request", "body": b"", "more_body": False}
+            # Fall through to the real receive after the buffered body: SSE
+            # streaming responses (EventSourceResponse._listen_for_disconnect)
+            # must BLOCK on receive() the way the raw ASGI receive does — an
+            # instantly-returning receive busy-spins and starves the event loop.
+            return await receive()
 
         return inner
 

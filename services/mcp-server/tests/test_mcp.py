@@ -192,3 +192,76 @@ def test_replay_window_enforced(client, seed):
 
 def test_health_ready(client):
     assert client.get("/healthz").json()["status"] == "ok"
+
+
+def test_sse_transport_full_flow(sse_client, seed):
+    """Live SSE transport (json_response=False) completes a full tool call."""
+    import re
+
+    sse_ct = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+
+    def _sse_post(body: bytes, session_id: str | None = None):
+        headers = {**call_tool_headers(seed["raw_key"], body), **sse_ct}
+        if session_id:
+            headers["Mcp-Session-Id"] = session_id
+        resp = sse_client.post("/mcp", content=body, headers=headers)
+        assert resp.status_code == 200, resp.text
+        data = re.search(r"data:\s*(\{.*\})", resp.text, re.S)
+        assert data, f"no SSE data event: {resp.text!r}"
+        return json.loads(data.group(1)), resp.headers.get("mcp-session-id")
+
+    init = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "sse-test", "version": "0.1"},
+            },
+        }
+    ).encode()
+    _, session_id = _sse_post(init)
+    assert session_id, "SSE initialize did not return a session id"
+    assert _sse_post(init)  # initialize result was produced over SSE
+
+    notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}).encode()
+    resp = sse_client.post(
+        "/mcp",
+        content=notif,
+        headers={**call_tool_headers(seed["raw_key"], notif), **sse_ct, "Mcp-Session-Id": session_id},
+    )
+    assert resp.status_code == 202
+
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "simulate_transaction",
+                "arguments": {
+                    "agent_id": seed["agent_id"],
+                    "chain_id": "base",
+                    "from_address": "0x1111111111111111111111111111111111111111",
+                    "to_address": "0x2222222222222222222222222222222222222222",
+                    "value_wei": 10**15,
+                    "calldata": None,
+                },
+            },
+        }
+    ).encode()
+    result, _ = _sse_post(body, session_id)
+    structured = result["result"].get("structuredContent") or result["result"]["content"]
+    assert result["result"].get("isError") is False, result
+    assert set(structured) == {
+        "chain_id",
+        "status",
+        "gas_used_wei",
+        "gas_ceiling_used",
+        "state_diff",
+        "revert_reason",
+        "simulated_at",
+        "simulator",
+    }

@@ -1,38 +1,33 @@
 """`simulate_transaction` MCP tool (FR-MCP-01).
 
-Returns a structured, schema-frozen simulation result for any supported
-chain. The simulator backend is behind a tiny protocol so Phase 5 can drop in
-an isolated Anvil fork (or Tenderly fallback) without touching the MCP schema
-or the tool surface.
-
-Phase 4 ships the `StubSimulator`: it consults the agent's active policy to
-flag gas-ceiling overruns and returns a well-formed result. State diffs and
-gas estimates arrive with the real fork backend in Phase 5 — the contract is
-already locked and contract-tested (task 4.5).
+Delegates to the blockchain service's fork-per-request simulator (Phase 5);
+the result is the frozen cross-chain SimulationResult contract. Fail-closed:
+any backend failure surfaces as a structured `status="error"` result.
 """
 
 from __future__ import annotations
 
-from at_shared.models import Agent
+from at_shared.models import Agent, Policy
 from sqlalchemy import select
 
 from mcp_server.auth import get_auth_context
 from mcp_server.db import session_scope
 from mcp_server.errors import MCPScopeError
-from mcp_server.schemas import (
-    SimulateRequest,
-    SimulationResult,
-    utcnow,
-    validate_result,
-)
+from mcp_server.schemas import SimulateRequest, SimulationResult, validate_result
 
 
-def simulate_transaction(req: SimulateRequest) -> SimulationResult:
-    """Simulate a transaction against the agent's policy context (read-only).
+def _active_policy_gas_ceiling(db, agent_id: str) -> int | None:
+    policy = db.scalar(
+        select(Policy)
+        .where(Policy.agent_id == agent_id, Policy.is_active.is_(True))
+        .order_by(Policy.version.desc())
+        .limit(1)
+    )
+    return policy.gas_ceiling if policy else None
 
-    Never mutates real state: the stub backend only reads policy + produces
-    a structured result. Phase 5 will fork chain state per request.
-    """
+
+async def simulate_transaction(req: SimulateRequest) -> SimulationResult:
+    """Simulate against an isolated fork; read-only, never mutates state."""
     ctx = get_auth_context()
     ctx.authorize_agent(req.agent_id)
 
@@ -40,17 +35,9 @@ def simulate_transaction(req: SimulateRequest) -> SimulationResult:
         agent = db.scalar(select(Agent).where(Agent.id == req.agent_id))
         if agent is None or agent.org_id != ctx.org_id:
             raise MCPScopeError("agent not found for this key scope")
+        gas_ceiling = _active_policy_gas_ceiling(db, req.agent_id)
 
-        # Stub backend: no fork available yet — no gas estimate or state diff.
-        # Phase 5 replaces this with an isolated Anvil fork that computes both.
-        result = SimulationResult(
-            chain_id=req.chain_id,
-            status="error",
-            gas_used_wei=0,
-            gas_ceiling_used=False,
-            state_diff=[],  # populated by the Phase 5 fork backend
-            revert_reason="simulation backend not available (Phase 5)",
-            simulated_at=utcnow(),
-            simulator="stub",
-        )
+    from blockchain.simulate import simulate_transaction as run_simulation
+
+    result = await run_simulation(req, gas_ceiling=gas_ceiling)
     return validate_result(SimulationResult, result)

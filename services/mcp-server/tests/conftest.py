@@ -157,6 +157,30 @@ def client(db_engine):
         yield c
 
 
+@pytest.fixture()
+def sse_client(db_engine):
+    """TestClient against the real SSE transport (json_response=False).
+
+    Regression guard for the live deployment path: the auth middleware buffers
+    the request body, and its replay receive must fall through to the real
+    receive after the buffered body — otherwise EventSourceResponse's
+    disconnect watcher busy-spins and the SSE response never completes.
+    """
+    from mcp.server.transport_security import TransportSecuritySettings
+    from mcp_server.main import create_app
+
+    app = create_app(
+        json_response=False,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["testserver", "localhost:*", "127.0.0.1:*"],
+            allowed_origins=["http://testserver", "http://localhost:*"],
+        ),
+    )
+    with TestClient(app) as c:
+        yield c
+
+
 def call_tool_headers(raw_key: str, body: bytes) -> dict[str, str]:
     """Build X-MCP-Timestamp / X-MCP-Signature headers (task 4.3)."""
     from mcp_server.auth import compute_signature

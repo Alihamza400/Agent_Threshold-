@@ -1,69 +1,18 @@
-"""Pydantic schemas for every MCP tool + response-schema validation (4.4).
+"""MCP tool schemas + response-schema validation (task 4.4).
 
-The simulation schema is the cross-chain contract (FR-MCP-01): identical
-structure for every supported chain so contract tests can assert consistency.
+The simulation schema is the cross-chain contract (FR-MCP-01) and lives in
+at-shared so the blockchain service and MCP server share one frozen shape.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Literal, TypeVar
+from typing import Any
 
-from at_shared.schemas.tx import ChainId
-from pydantic import BaseModel, Field, field_validator
+from at_shared.schemas.simulation import SimulateRequest, SimulationResult  # noqa: F401
+from pydantic import BaseModel
 
 from mcp_server.errors import MCPSchemaError
-
-T = TypeVar("T", bound=BaseModel)
-
-
-class SimulateRequest(BaseModel):
-    """Input for the `simulate_transaction` tool (FR-MCP-01)."""
-
-    agent_id: str
-    chain_id: ChainId
-    from_address: str
-    to_address: str | None = None
-    value_wei: int = Field(ge=0)
-    calldata: str | None = None
-
-    @field_validator("from_address", "to_address")
-    @classmethod
-    def _addr(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        if not v.startswith("0x") or len(v) != 42:
-            raise ValueError("must be a 0x-prefixed 40-hex-char address")
-        return v.lower()
-
-
-class StateDiffEntry(BaseModel):
-    """A single storage slot change captured by the fork simulation."""
-
-    address: str
-    slot: str = Field(description="storage key as 0x-prefixed hex")
-    before: str = Field(description="pre-state value as 0x-prefixed hex")
-    after: str = Field(description="post-state value as 0x-prefixed hex")
-
-
-class SimulationResult(BaseModel):
-    """Structured simulation result — the cross-chain contract (FR-MCP-01).
-
-    Identical schema for every chain_id; simulator backends may only vary
-    the `simulator` field. Phase 5 swaps the stub backend for an isolated
-    Anvil fork; this schema is frozen now.
-    """
-
-    chain_id: ChainId
-    status: Literal["success", "reverted", "error"]
-    gas_used_wei: int = Field(ge=0)
-    gas_ceiling_used: bool = Field(
-        description="true when the estimate hit the policy gas ceiling"
-    )
-    state_diff: list[StateDiffEntry] = Field(default_factory=list)
-    revert_reason: str | None = None
-    simulated_at: datetime
-    simulator: Literal["stub", "anvil-fork"] = "stub"
 
 
 class PolicyRead(BaseModel):

@@ -42,6 +42,24 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str = "admin@agentthreshold.dev"
     bootstrap_admin_password: str = "ChangeMe_Str0ng!"
 
+    # Blockchain (Phase 5)
+    # Primary + fallback RPC endpoints per chain, comma-separated if more.
+    eth_rpc_url: str = ""
+    eth_rpc_fallback_url: str = ""
+    base_rpc_url: str = ""
+    base_rpc_fallback_url: str = ""
+    # Gas safety buffer (fraction above eth_estimateGas) — default 20%.
+    gas_buffer_pct: float = 20.0
+    # Default confirmation depth: 2 for L2, 12 for mainnet.
+    eth_confirmations: int = 12
+    base_confirmations: int = 2
+    # Anvil (fork-per-request simulation). Empty => use process spawn on PATH.
+    anvil_rpc_url: str = ""
+    # Chainlink aggregator addresses (ETH/USD). Empty => fallback oracle.
+    eth_usd_aggregator: str = ""
+    # RPC timeout (seconds) — fail-closed on slow providers.
+    rpc_timeout_seconds: float = 5.0
+
     @property
     def database_url(self) -> str:
         return (
