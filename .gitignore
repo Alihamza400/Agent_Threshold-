@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environment / Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Docker
+.postgres-data/
+.redis-data/
+
+# Foundry / Solidity
+contracts/cache/
+contracts/out/
+contracts/broadcast/
+forge-cache/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate*
