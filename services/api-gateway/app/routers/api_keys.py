@@ -23,12 +23,13 @@ def create_api_key(
 ) -> ApiKeyCreated:
     if body.agent_ids:
         owned = {
-            aid
-            for (aid,) in db.execute(select(Agent.id).where(Agent.org_id == admin.org_id)).all()
+            aid for (aid,) in db.execute(select(Agent.id).where(Agent.org_id == admin.org_id)).all()
         }
         unknown = set(body.agent_ids) - owned
         if unknown:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown agent ids: {sorted(unknown)}")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"Unknown agent ids: {sorted(unknown)}"
+            )
 
     raw_key, prefix = generate_api_key()
     record = ApiKey(

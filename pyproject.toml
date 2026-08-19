@@ -5,11 +5,27 @@ description = "Real-Time Transaction Firewall for Autonomous AI Agents"
 requires-python = ">=3.12"
 dependencies = []
 
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.23.0",
+    "respx>=0.23.0",
+    "httpx>=0.27.0",
+    "ruff>=0.8.0",
+    # SDK is a workspace member; the root dev env installs it (editable) so the
+    # monorepo suite can exercise it and the SDK contract tests run in-process.
+    "agentthreshold-py>=0.1.0",
+]
+
 [tool.uv.workspace]
 members = [
     "shared",
     "services/*",
+    "sdk/python",
 ]
+
+[tool.uv.sources]
+agentthreshold-py = { workspace = true }
 
 [tool.ruff]
 line-length = 100
@@ -21,5 +37,12 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM"]
 ignore = ["E501", "B008"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
 addopts = "-q"
+asyncio_mode = "auto"
+markers = [
+    "contract: SDK<->server schema parity against at-shared (task 8.1)",
+    "integration: full-pipeline integration tests against mock chain",
+    "security: fail-closed / tamper / chaos tests",
+    "agents: labeled-set agreement gates for AI agents",
+    "e2e: SDK-wrapped agent screened end-to-end (task 8.7)",
+]

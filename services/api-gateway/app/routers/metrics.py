@@ -74,27 +74,37 @@ def metrics_overview(
         Transaction.created_at >= since,
         Transaction.screened_ms.is_not(None),
     )
-    p50 = db.scalar(select(func.percentile_cont(0.5).within_group(latency_stmt.subquery().c.screened_ms)))
-    p95 = db.scalar(select(func.percentile_cont(0.95).within_group(latency_stmt.subquery().c.screened_ms)))
+    p50 = db.scalar(
+        select(func.percentile_cont(0.5).within_group(latency_stmt.subquery().c.screened_ms))
+    )
+    p95 = db.scalar(
+        select(func.percentile_cont(0.95).within_group(latency_stmt.subquery().c.screened_ms))
+    )
 
     # --- daily series (14 days) ---
     series = _bucket_count(db, org, 14)
 
     # --- approval queue health ---
-    pending_approvals = db.scalar(
-        select(func.count())
-        .select_from(Approval)
-        .where(Approval.org_id == org, Approval.status == "pending")
-    ) or 0
-    resolved = db.scalar(
-        select(func.count())
-        .select_from(Approval)
-        .where(
-            Approval.org_id == org,
-            Approval.status.in_(("approved", "rejected")),
-            Approval.decided_at.is_not(None),
+    pending_approvals = (
+        db.scalar(
+            select(func.count())
+            .select_from(Approval)
+            .where(Approval.org_id == org, Approval.status == "pending")
         )
-    ) or 0
+        or 0
+    )
+    resolved = (
+        db.scalar(
+            select(func.count())
+            .select_from(Approval)
+            .where(
+                Approval.org_id == org,
+                Approval.status.in_(("approved", "rejected")),
+                Approval.decided_at.is_not(None),
+            )
+        )
+        or 0
+    )
     avg_decision_hours = None
     if resolved:
         avg_seconds = db.scalar(

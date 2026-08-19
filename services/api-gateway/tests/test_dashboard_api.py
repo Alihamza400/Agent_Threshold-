@@ -82,9 +82,7 @@ def _auditor_token(client, db_session, org_id) -> str:
 # --------------------------------------------------------------------------
 def test_agents_list_admin_and_role_gate(client, admin_token):
     reg = _register(client, admin_token, _wallet(11), "agent-list")
-    resp = client.get(
-        "/v1/agents", headers={"Authorization": f"Bearer {admin_token}"}
-    )
+    resp = client.get("/v1/agents", headers={"Authorization": f"Bearer {admin_token}"})
     assert resp.status_code == 200
     assert any(a["id"] == reg["agent"]["id"] for a in resp.json())
 
@@ -123,9 +121,9 @@ def test_policy_get_put_versions_and_audit(client, admin_token, db_session):
     assert versions[0]["is_active"] is False
 
     # a change audit record was written
-    records = db_session.query(AuditRecord).filter_by(
-        agent_id=agent_id, event_type="policy_update"
-    ).all()
+    records = (
+        db_session.query(AuditRecord).filter_by(agent_id=agent_id, event_type="policy_update").all()
+    )
     assert len(records) == 1
     assert records[0].details["to_version"] == 2
 
@@ -281,9 +279,12 @@ def test_audit_record_proof(client, admin_token, db_session):
     _screen(client, key, reg["agent"]["id"], NEW_CP)
 
     org_id = db_session.query(User).filter_by(email="admin@agentthreshold.dev").first().org_id
-    records = db_session.query(AuditRecord).filter_by(org_id=org_id).order_by(
-        AuditRecord.created_at.asc()
-    ).all()
+    records = (
+        db_session.query(AuditRecord)
+        .filter_by(org_id=org_id)
+        .order_by(AuditRecord.created_at.asc())
+        .all()
+    )
     batch = AnchorBatch(
         id=uuid7(),
         batch_id=99,
@@ -330,9 +331,7 @@ def test_metrics_overview(client, admin_token, db_session):
 
     org_id = db_session.query(User).filter_by(email="admin@agentthreshold.dev").first().org_id
     auditor = _auditor_token(client, db_session, org_id)
-    resp = client.get(
-        "/v1/metrics/overview", headers={"Authorization": f"Bearer {auditor}"}
-    )
+    resp = client.get("/v1/metrics/overview", headers={"Authorization": f"Bearer {auditor}"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["total_transactions_24h"] >= 1
@@ -344,9 +343,7 @@ def test_metrics_overview(client, admin_token, db_session):
 
 
 def test_metrics_requires_auditor_or_above(client, admin_token):
-    resp = client.get(
-        "/v1/metrics/overview", headers={"Authorization": f"Bearer {admin_token}"}
-    )
+    resp = client.get("/v1/metrics/overview", headers={"Authorization": f"Bearer {admin_token}"})
     assert resp.status_code == 200
 
 

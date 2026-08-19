@@ -33,9 +33,10 @@ def _req(**kw) -> SimulateRequest:
 
 
 @pytest.mark.asyncio
-async def test_no_backend_fails_closed():
-    """No anvil/RPC configured -> structured error result, not a crash."""
+async def test_no_backend_fails_closed(monkeypatch):
+    """No anvil/RPC backend available -> structured error, not a crash."""
     chain = ChainConfig(ChainId.BASE, [], confirmations=2)
+    monkeypatch.setattr("blockchain.simulate.build_simulator", lambda chain: None)
     result = await simulate_transaction(_req(), chain=chain, simulator=None)
     assert result.status == "error"
     assert "backend" in result.revert_reason

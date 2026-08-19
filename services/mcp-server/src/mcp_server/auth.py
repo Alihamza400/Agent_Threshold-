@@ -25,9 +25,7 @@ from sqlalchemy.orm import Session
 from mcp_server.errors import MCPAuthError, MCPScopeError
 
 _SIGNATURE_REPLAY_WINDOW_SECONDS = 300
-_DEFAULT_TOOL_ALLOWLIST = frozenset(
-    {"simulate_transaction", "get_policy", "get_agent_history"}
-)
+_DEFAULT_TOOL_ALLOWLIST = frozenset({"simulate_transaction", "get_policy", "get_agent_history"})
 # The MCP server exposes NO mutating tools. If this set ever grows, the
 # registry rejects the tool at registration (FR-MCP-02).
 _MUTATING_TOOLS: frozenset[str] = frozenset()

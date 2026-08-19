@@ -87,7 +87,9 @@ def update_policy(
         "daily_spend_limit_usd": body.daily_spend_limit_usd
         if body.daily_spend_limit_usd is not None
         else current.daily_spend_limit_usd,
-        "allow_list": body.allow_list if body.allow_list is not None else (current.allow_list or []),
+        "allow_list": body.allow_list
+        if body.allow_list is not None
+        else (current.allow_list or []),
         "deny_list": body.deny_list if body.deny_list is not None else (current.deny_list or []),
         "rate_limit_per_minute": body.rate_limit_per_minute
         if body.rate_limit_per_minute is not None

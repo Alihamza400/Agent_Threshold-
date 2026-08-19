@@ -189,9 +189,7 @@ def test_decision_persisted_and_retrievable(client, admin_token):
         },
     ).json()
     tx_id = screen["transaction_id"]
-    got = client.get(
-        f"/v1/transactions/{tx_id}", headers={"X-API-Key": key}
-    )
+    got = client.get(f"/v1/transactions/{tx_id}", headers={"X-API-Key": key})
     assert got.status_code == 200
     assert got.json()["id"] == tx_id
     assert got.json()["agent_id"] == reg["agent"]["id"]
@@ -201,12 +199,16 @@ def test_kill_switch_requires_admin(client, admin_token, db_session):
     from at_shared.models import User
     from at_shared.security import hash_password
 
-    org_id = client.get(
-        "/v1/auth/me", headers={"Authorization": f"Bearer {admin_token}"}
-    ).json()["org_id"]
+    org_id = client.get("/v1/auth/me", headers={"Authorization": f"Bearer {admin_token}"}).json()[
+        "org_id"
+    ]
     auditor = User(
-        id=uuid7(), org_id=org_id, email="auditor2@agentthreshold.dev",
-        role="auditor", password_hash=hash_password("AuditorPass123!"), is_active=True,
+        id=uuid7(),
+        org_id=org_id,
+        email="auditor2@agentthreshold.dev",
+        role="auditor",
+        password_hash=hash_password("AuditorPass123!"),
+        is_active=True,
     )
     db_session.add(auditor)
     db_session.commit()

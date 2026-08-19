@@ -77,9 +77,7 @@ def register_agent(
         raise HTTPException(status.HTTP_409_CONFLICT, "Agent already registered") from exc
 
     db.refresh(agent)
-    return AgentRegistered(
-        agent=AgentRead.model_validate(agent), default_policy_id=policy.id
-    )
+    return AgentRegistered(agent=AgentRead.model_validate(agent), default_policy_id=policy.id)
 
 
 @router.get("", response_model=list[AgentRead])

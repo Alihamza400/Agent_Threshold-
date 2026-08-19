@@ -55,6 +55,17 @@ def test_session_factory(db_engine):
     return sessionmaker(bind=db_engine, expire_on_commit=False)
 
 
+@pytest.fixture(autouse=True)
+def flush_redis():
+    """Isolate per-IP/org rate-limit buckets and any short-lived counters
+    between tests (Redis is shared across the suite)."""
+    from at_shared.redis import redis_client
+
+    redis_client.flushdb()
+    yield
+    redis_client.flushdb()
+
+
 @pytest.fixture()
 def db_session(db_engine):
     factory = test_session_factory(db_engine)
@@ -64,7 +75,7 @@ def db_session(db_engine):
 
 
 @pytest.fixture()
-def client(db_engine):
+def client(db_engine, flush_redis):
     factory = test_session_factory(db_engine)
 
     def override_get_db():
@@ -77,6 +88,13 @@ def client(db_engine):
     from app.main import app
 
     app.dependency_overrides[get_db] = override_get_db
+
+    # Point the gateway's in-process orchestrator pipeline at the test DB and
+    # the explicit no-simulation mode (see SIMULATION_MODE env above).
+    from app.routers import transactions as tx_router
+    from orchestrator.pipeline import Pipeline
+
+    tx_router._pipeline = Pipeline(session_factory=factory, simulation_mode="disabled")
 
     # Bootstrap org + admin
     with factory() as s:
@@ -106,8 +124,6 @@ def client(db_engine):
 
 @pytest.fixture()
 def admin_token(client) -> str:
-    resp = client.post(
-        "/v1/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
-    )
+    resp = client.post("/v1/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     assert resp.status_code == 200, resp.text
     return resp.json()["access_token"]

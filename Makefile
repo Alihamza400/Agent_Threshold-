@@ -1,4 +1,4 @@
-.PHONY: infra-up infra-down db-migrate db-upgrade db-downgrade api-gw test lint format seed
+.PHONY: infra-up infra-down db-migrate db-upgrade db-downgrade api-gw orch notify test lint format seed sync
 
 ## Infrastructure
 infra-up:
@@ -6,6 +6,10 @@ infra-up:
 
 infra-down:
 	docker compose down
+
+## Workspace
+sync:
+	uv sync --all-packages --group dev
 
 ## Database
 db-migrate:
@@ -20,6 +24,12 @@ db-downgrade:
 ## Services
 api-gw:
 	uv run --directory services/api-gateway uvicorn app.main:app --reload --port 8000
+
+orch:
+	uv run --directory services/orchestrator uvicorn orchestrator.main:app --reload --port 8001
+
+notify:
+	uv run --directory services/notification uvicorn notification_service.main:app --reload --port 8002
 
 ## Quality
 test:

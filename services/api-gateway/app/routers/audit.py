@@ -70,7 +70,9 @@ def search_records(
 ) -> AuditSearchResult:
     from_ts = _parse_dt(from_.isoformat()) if from_ else None
     to_ts = _parse_dt(to.isoformat()) if to else None
-    stmt = _build_query(db, user.org_id, agent_id=agent_id, event_type=event_type, from_dt=from_ts, to_dt=to_ts)
+    stmt = _build_query(
+        db, user.org_id, agent_id=agent_id, event_type=event_type, from_dt=from_ts, to_dt=to_ts
+    )
     if decision:
         stmt = stmt.where(AuditRecord.details["decision"].as_string() == decision)
     if anchored is not None:
@@ -107,9 +109,7 @@ def record_proof(
             "Record is not anchored yet; proof becomes available after the next batch",
         )
 
-    batch = db.scalar(
-        select(AnchorBatch).where(AnchorBatch.batch_id == record.anchored_batch_id)
-    )
+    batch = db.scalar(select(AnchorBatch).where(AnchorBatch.batch_id == record.anchored_batch_id))
     if batch is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Anchor batch not found")
 
@@ -149,7 +149,9 @@ def export_csv(
 ) -> StreamingResponse:
     from_ts = _parse_dt(from_.isoformat()) if from_ else None
     to_ts = _parse_dt(to.isoformat()) if to else None
-    stmt = _build_query(db, user.org_id, agent_id=agent_id, event_type=event_type, from_dt=from_ts, to_dt=to_ts)
+    stmt = _build_query(
+        db, user.org_id, agent_id=agent_id, event_type=event_type, from_dt=from_ts, to_dt=to_ts
+    )
     if decision:
         stmt = stmt.where(AuditRecord.details["decision"].as_string() == decision)
     rows = db.scalars(stmt.order_by(AuditRecord.created_at.asc())).all()
@@ -157,8 +159,18 @@ def export_csv(
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(
-        ["id", "created_at", "event_type", "agent_id", "transaction_id",
-         "decision", "to_address", "value_wei", "event_hash", "anchored_batch_id"]
+        [
+            "id",
+            "created_at",
+            "event_type",
+            "agent_id",
+            "transaction_id",
+            "decision",
+            "to_address",
+            "value_wei",
+            "event_hash",
+            "anchored_batch_id",
+        ]
     )
     for r in rows:
         details = r.details or {}
@@ -199,29 +211,35 @@ def export_pdf(
     """
     from_ts = _parse_dt(from_.isoformat()) if from_ else None
     to_ts = _parse_dt(to.isoformat()) if to else None
-    stmt = _build_query(db, user.org_id, agent_id=agent_id, event_type=event_type, from_dt=from_ts, to_dt=to_ts)
+    stmt = _build_query(
+        db, user.org_id, agent_id=agent_id, event_type=event_type, from_dt=from_ts, to_dt=to_ts
+    )
     if decision:
         stmt = stmt.where(AuditRecord.details["decision"].as_string() == decision)
-    rows = db.scalars(
-        stmt.order_by(AuditRecord.created_at.asc()).limit(500)
-    ).all()
+    rows = db.scalars(stmt.order_by(AuditRecord.created_at.asc()).limit(500)).all()
 
     # Batch proofs: group anchored records by batch, rebuild each tree.
     batches: dict[int, AnchorBatch] = {
         b.batch_id: b
         for b in db.scalars(
-            select(AnchorBatch).where(AnchorBatch.batch_id.in_(
-                {r.anchored_batch_id for r in rows if r.anchored_batch_id is not None} or [-1]
-            ))
+            select(AnchorBatch).where(
+                AnchorBatch.batch_id.in_(
+                    {r.anchored_batch_id for r in rows if r.anchored_batch_id is not None} or [-1]
+                )
+            )
         )
     }
     leaves_by_batch: dict[int, list[tuple[str, bytes]]] = {}
     for r in rows:
         if r.anchored_batch_id is None:
             continue
-        leaves_by_batch.setdefault(r.anchored_batch_id, []).append((r.id, bytes.fromhex(r.event_hash)))
+        leaves_by_batch.setdefault(r.anchored_batch_id, []).append(
+            (r.id, bytes.fromhex(r.event_hash))
+        )
 
-    pdf = _render_pdf(user, rows, batches, leaves_by_batch, decision=decision, event_type=event_type)
+    pdf = _render_pdf(
+        user, rows, batches, leaves_by_batch, decision=decision, event_type=event_type
+    )
     headers = {"Content-Disposition": 'attachment; filename="audit_export.pdf"'}
     return Response(
         content=pdf,
@@ -328,9 +346,7 @@ def _render_pdf(
             proof: list[tuple[bytes, bool]] = []
             if index >= 0 and batch is not None:
                 proof = merkle_proof([leaf for _, leaf in leaves], index)
-            steps = "  |  ".join(
-                f"{'R' if right else 'L'}:{s.hex()}" for s, right in proof
-            )
+            steps = "  |  ".join(f"{'R' if right else 'L'}:{s.hex()}" for s, right in proof)
             story.append(
                 Paragraph(
                     f"<b>record {r.id}</b> — batch #{r.anchored_batch_id}"

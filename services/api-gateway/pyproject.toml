@@ -8,6 +8,7 @@ dependencies = [
     "at-policy-engine>=0.1.0",
     "at-anomaly-scorer>=0.1.0",
     "at-screening-agents>=0.1.0",
+    "at-orchestrator>=0.1.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "python-multipart>=0.0.9",
@@ -32,6 +33,14 @@ at-shared = { workspace = true }
 at-policy-engine = { workspace = true }
 at-anomaly-scorer = { workspace = true }
 at-screening-agents = { workspace = true }
+at-orchestrator = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "contract: SDK<->server schema parity against at-shared (task 8.1)",
+    "integration: full-pipeline integration tests against mock chain",
+    "security: fail-closed / tamper / chaos tests",
+    "agents: labeled-set agreement gates for AI agents",
+    "e2e: SDK-wrapped agent screened end-to-end (task 8.7)",
+]

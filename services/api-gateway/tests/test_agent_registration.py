@@ -57,7 +57,10 @@ def test_get_agent(client, admin_token, db_session):
     created = client.post(
         "/v1/agents/register",
         headers={"Authorization": f"Bearer {admin_token}"},
-        json={"name": "agent-gamma", "wallet_address": "0x9999999999999999999999999999999999999999"},
+        json={
+            "name": "agent-gamma",
+            "wallet_address": "0x9999999999999999999999999999999999999999",
+        },
     ).json()["agent"]
     resp = client.get(
         f"/v1/agents/{created['id']}", headers={"Authorization": f"Bearer {admin_token}"}

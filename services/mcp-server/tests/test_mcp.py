@@ -11,9 +11,26 @@ import json
 import time
 
 from at_shared.schemas.tx import ChainId
-from conftest import call_tool_headers
 
 CT = {"Content-Type": "application/json", "Accept": "application/json"}
+
+
+def call_tool_headers(raw_key: str, body: bytes) -> dict[str, str]:
+    """Build X-MCP-Timestamp / X-MCP-Signature headers (task 4.3).
+
+    Defined locally, not imported from conftest: every service's test
+    directory defines a `conftest` module, so `from conftest import X` is
+    shadowed and order-dependent when the full monorepo suite runs.
+    """
+    from mcp_server.auth import compute_signature
+
+    ts = str(int(time.time()))
+    sig = compute_signature(raw_key, ts, body)
+    return {
+        "X-API-Key": raw_key,
+        "X-MCP-Timestamp": ts,
+        "X-MCP-Signature": sig,
+    }
 
 
 def _session(client, raw_key: str) -> str:
@@ -35,7 +52,9 @@ def _session(client, raw_key: str) -> str:
     session_id = resp.headers.get("mcp-session-id")
     assert session_id, "no session id in initialize response"
 
-    notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}).encode()
+    notif = json.dumps(
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+    ).encode()
     client.post(
         "/mcp",
         content=notif,
@@ -82,9 +101,7 @@ def test_tools_list_exposes_only_allowlisted(client, seed):
     names = {t["name"] for t in _result(resp)["tools"]}
     assert names == {"simulate_transaction", "get_policy", "get_agent_history"}
     # no write tools exist
-    assert not any(
-        n.startswith(("write", "create", "update", "delete")) for n in names
-    )
+    assert not any(n.startswith(("write", "create", "update", "delete")) for n in names)
 
 
 def test_simulate_schema_consistent_across_chains(client, seed):
@@ -132,7 +149,9 @@ def test_get_policy_read_only_returns_policy(client, seed):
 def test_unknown_tool_rejected(client, seed):
     """FR-MCP-02: non-allow-listed (e.g. write) tools rejected at the server."""
     session_id = _session(client, seed["raw_key"])
-    resp = _call(client, seed["raw_key"], "update_policy", {"agent_id": seed["agent_id"]}, session_id)
+    resp = _call(
+        client, seed["raw_key"], "update_policy", {"agent_id": seed["agent_id"]}, session_id
+    )
     assert _result(resp)["isError"] is True
 
 
@@ -185,7 +204,12 @@ def test_replay_window_enforced(client, seed):
     resp = client.post(
         "/mcp",
         content=body,
-        headers={"X-API-Key": seed["raw_key"], "X-MCP-Timestamp": old_ts, "X-MCP-Signature": sig, **CT},
+        headers={
+            "X-API-Key": seed["raw_key"],
+            "X-MCP-Timestamp": old_ts,
+            "X-MCP-Signature": sig,
+            **CT,
+        },
     )
     assert resp.status_code == 401
 
@@ -226,11 +250,17 @@ def test_sse_transport_full_flow(sse_client, seed):
     assert session_id, "SSE initialize did not return a session id"
     assert _sse_post(init)  # initialize result was produced over SSE
 
-    notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}).encode()
+    notif = json.dumps(
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+    ).encode()
     resp = sse_client.post(
         "/mcp",
         content=notif,
-        headers={**call_tool_headers(seed["raw_key"], notif), **sse_ct, "Mcp-Session-Id": session_id},
+        headers={
+            **call_tool_headers(seed["raw_key"], notif),
+            **sse_ct,
+            "Mcp-Session-Id": session_id,
+        },
     )
     assert resp.status_code == 202
 

@@ -20,9 +20,7 @@ def test_login_invalid_password(client):
 
 
 def test_login_invalid_email_format(client):
-    resp = client.post(
-        "/v1/auth/login", json={"email": "not-an-email", "password": "whatever123"}
-    )
+    resp = client.post("/v1/auth/login", json={"email": "not-an-email", "password": "whatever123"})
     assert resp.status_code == 422
 
 

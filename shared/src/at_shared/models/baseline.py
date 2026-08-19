@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, func
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from at_shared.db import Base
@@ -32,7 +32,9 @@ class BaselineProfile(Base):
 
     # statistical summary of the rolling window
     tx_count: Mapped[int] = mapped_column(default=0, nullable=False)
-    total_volume_wei: Mapped[int] = mapped_column(default=0, nullable=False)
+    # wei volumes can exceed the 32-bit INTEGER range -> BigInteger (matches
+    # migration 0004; keeps create_all consistent with the production schema).
+    total_volume_wei: Mapped[int] = mapped_column(BigInteger(), default=0, nullable=False)
     mean_value_wei: Mapped[float] = mapped_column(default=0.0, nullable=False)
     median_value_wei: Mapped[float] = mapped_column(default=0.0, nullable=False)
     std_value_wei: Mapped[float] = mapped_column(default=0.0, nullable=False)
