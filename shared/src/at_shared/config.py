@@ -46,9 +46,59 @@ class Settings(BaseSettings):
     # permissive in development and locked-down (none) in production.
     cors_origins: str = ""
 
+    # OWASP request-size cap for all HTTP services (Phase 9.1). Bodies larger
+    # than this are rejected with 413 before any parsing (DoS hardening).
+    max_request_body_bytes: int = 65536
+
     # Unresolved escalations expire after this many minutes and default to
     # reject (fail-closed human review queue).
     escalation_ttl_minutes: int = 60
+
+    # Escalation notification service (Phase 8.4).
+    # Per-org delivery endpoint mapping, format: "org_id=url" pairs separated
+    # by commas (e.g. "org1=https://hooks.slack.com/... ,org2=https://.../hook").
+    # The endpoint receives a POST with the escalation payload JSON. Empty
+    # means delivery is disabled (queue-only) — the human queue still works.
+    notification_webhooks: str = ""
+    # Slack-style hook semantics: when true, the payload is wrapped in the
+    # Slack incoming-webhook envelope ({ "text": ... }).
+    notification_slack_format: bool = True
+    # Delivery retry policy (target: 99% delivered within 5s of creation).
+    notify_poll_seconds: float = 0.5
+    notify_max_attempts: int = 8
+    notify_backoff_base_seconds: float = 1.0
+
+    # Execution adapter (task 8.5).
+    # Internal service-to-service API key for the execution endpoints (from
+    # the secrets manager in production; the gateway passes it through).
+    execution_api_key: str = "change_me_execution_key"
+    # Poll cadence for the confirm/reorg/stuck worker.
+    execution_poll_seconds: float = 1.0
+    # A broadcast tx with no receipt after this many seconds is flagged stuck
+    # and triggers the RBF/cancel re-screen flow (TRD 5.10).
+    execution_stuck_after_seconds: float = 60.0
+    # Single-use decision token lifetime (seconds). The signed tx must be
+    # submitted within this window or a new token must be issued (re-approval
+    # is NOT automatic — fail-closed).
+    decision_token_ttl_seconds: int = 300
+    # RBF/cancel replacement: gas price bump above the original (percent).
+    execution_rbf_gas_bump_pct: float = 20.0
+    execution_cancel_gas_bump_pct: float = 20.0
+    # Max broadcast attempts (exponential backoff) before surfacing an alert.
+    execution_max_broadcast_attempts: int = 5
+    execution_backoff_base_seconds: float = 2.0
+
+    # An APPROVE from the deterministic policy engine is downgraded to
+    # ESCALATE when the aggregate advisory confidence (0-100) falls below this
+    # threshold (Phase 8 orchestrator, 8.3).
+    escalate_below_confidence: float = 60.0
+
+    # Simulation enforcement in the screening pipeline (Phase 8 orchestrator).
+    #   "required" (default, production): a missing/failed simulation backend
+    #     fails closed -> escalate, never approve (SR-04, zero silent bypass).
+    #   "disabled": skips simulation entirely. DEV/TEST ONLY — production must
+    #     never run with simulation disabled.
+    simulation_mode: str = "required"
 
     # Blockchain (Phase 5)
     # Primary + fallback RPC endpoints per chain, comma-separated if more.
