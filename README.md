@@ -41,8 +41,9 @@ docs/                 Engineering docs
 # 1. Boot local infra
 docker compose up -d postgres redis
 
-# 2. Install workspace
-uv sync
+# 2. Install workspace (all packages + dev tooling)
+make sync
+# or: uv sync --all-packages --group dev
 
 # 3. Run migrations
 uv run alembic upgrade head
