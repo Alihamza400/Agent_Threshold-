@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import jwt as pyjwt
 from app.deps import get_current_user
+from app.rate_limit import login_guard
 from at_shared.config import get_settings
 from at_shared.db import get_db
 from at_shared.models import User
@@ -19,7 +20,7 @@ from at_shared.security import (
     decode_token,
     verify_password,
 )
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -38,7 +39,12 @@ def _issue_tokens(user: User) -> TokenResponse:
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+def login(
+    body: LoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(login_guard),
+) -> TokenResponse:
     user = db.scalar(select(User).where(User.email == body.email))
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")

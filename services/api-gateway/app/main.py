@@ -10,7 +10,8 @@ from contextlib import asynccontextmanager
 
 from at_shared.config import get_settings
 from at_shared.db import engine
-from fastapi import FastAPI, Request
+from at_shared.http_security import install_http_security
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -31,9 +32,12 @@ from app.routers import (
 settings = get_settings()
 
 # CORS: explicit configured origins (comma-separated) win; otherwise permissive
-# in development and locked down (none) in production.
+# in development and locked down (none) in production. Wildcard origins never
+# carry credentials (browser spec) — credentials are only allowed when the
+# origin allow-list is explicit.
 _configured_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 _cors_origins = _configured_origins or (["*"] if not settings.is_production else [])
+_cors_allow_credentials = bool(_configured_origins)
 
 
 @asynccontextmanager
@@ -53,24 +57,21 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=_cors_allow_credentials,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-API-Key",
+        "X-Org-Id",
+        "X-Trace-Id",
+    ],
 )
 app.middleware("http")(rate_limit_middleware(app))
-
-
-# --------------------------------------------------------------------------
-# Middleware: structured request tracing header + security headers
-# --------------------------------------------------------------------------
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains" if settings.is_production else ""
-    return response
+# OWASP hardening: request-size cap (413) + security response headers.
+install_http_security(
+    app, max_body_bytes=settings.max_request_body_bytes, is_production=settings.is_production
+)
 
 
 # --------------------------------------------------------------------------
