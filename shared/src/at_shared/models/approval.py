@@ -58,6 +58,14 @@ class Approval(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     decision_note: Mapped[str | None] = mapped_column(String(500))
 
+    # Notification delivery state (task 8.4). Owned by the escalation
+    # notification worker; the human decision queue never reads these. A
+    # notification failure must NEVER affect the approval outcome.
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    notify_attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    notify_last_error: Mapped[str | None] = mapped_column(String(500))
+    notify_next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

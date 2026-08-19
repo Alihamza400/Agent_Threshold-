@@ -44,6 +44,9 @@ def _expire_overdue(db: Session, org_id: str) -> None:
     if overdue:
         for a in overdue:
             a.status = "expired"
+            tx = db.get(Transaction, a.transaction_id)
+            if tx is not None:
+                tx.status = "rejected"
         db.commit()
 
 
@@ -93,9 +96,7 @@ def list_approvals(
     if status_filter not in {"pending", "approved", "rejected", "expired"}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid status filter")
     _expire_overdue(db, user.org_id)
-    stmt = select(Approval).where(
-        Approval.org_id == user.org_id, Approval.status == status_filter
-    )
+    stmt = select(Approval).where(Approval.org_id == user.org_id, Approval.status == status_filter)
     if agent_id:
         stmt = stmt.where(Approval.agent_id == agent_id)
     rows = db.scalars(stmt.order_by(Approval.created_at.desc()).limit(200)).all()
