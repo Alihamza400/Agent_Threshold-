@@ -19,10 +19,24 @@ class Transaction(Base):
     """Canonical, chain-normalized transaction record.
 
     ON DELETE RESTRICT: audit/decision history is never cascade-deleted.
+
+    Status lifecycle (task 8.5 execution adapter):
+        screened      -> initial record written by the screening pipeline
+        approved      -> policy/human Approve decision (execution eligible)
+        broadcasting  -> submit started, pre-broadcast (transient)
+        broadcast     -> eth_sendRawTransaction accepted; awaiting confirmation
+        executed      -> confirmed to chain depth
+        stuck         -> broadcast but unconfirmed beyond the timeout
+        reorged       -> confirmed block was orphaned (reorg flag)
+        rejected      -> policy/human Reject, or unresolved escalation expiry
+        cancelled     -> explicit cancel; RBF/cancel replacement broadcast
     """
 
     __tablename__ = "transactions"
-    __table_args__ = (Index("ix_transactions_agent_created", "agent_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_transactions_agent_created", "agent_id", "created_at"),
+        Index("ix_transactions_exec_status", "status", "broadcast_at"),
+    )
 
     id: Mapped[UuidPk]
     agent_id: Mapped[str] = mapped_column(
@@ -52,6 +66,17 @@ class Transaction(Base):
     trace_id: Mapped[str | None] = mapped_column(String(64))
     # wall-clock time spent in the screening pipeline (ms) — drives latency SLOs.
     screened_ms: Mapped[int | None] = mapped_column()
+
+    # Execution adapter lifecycle (task 8.5).
+    tx_hash: Mapped[str | None] = mapped_column(String(66))
+    nonce: Mapped[int | None] = mapped_column(BigInteger())
+    broadcast_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    broadcast_attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    block_number: Mapped[int | None] = mapped_column(BigInteger())
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stuck_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reorged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
