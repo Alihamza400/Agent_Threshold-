@@ -1,0 +1,39 @@
+[project]
+name = "agentthreshold-py"
+version = "0.1.0"
+description = "AgentThreshold Python SDK: screen every agent transaction before it is signed or broadcast"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27.0",
+    "pydantic>=2.8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentthreshold"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "respx>=0.23.0",
+]
+# at-shared is DEV/CONTRACT-ONLY: the contract tests prove the SDK's public
+# DTOs stay in lock-step with the canonical server schemas. It is NOT a runtime
+# dependency of the customer-facing SDK.
+contract = ["at-shared>=0.1.0"]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+at-shared = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "contract: SDK<->server schema parity against at-shared (dev-only dependency)",
+]
