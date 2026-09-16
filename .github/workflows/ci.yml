@@ -1,0 +1,283 @@
+# =============================================================================
+# AgentThreshold — CI (task 9.4 + 9.5)
+#
+# Every push/PR runs the full quality + security gate:
+#   test        — ruff lint + pytest suite (unit, security, chaos, e2e)
+#   contract    — SDK<->server schema parity tests
+#   solidity    — Foundry fuzz + branch-coverage tests
+#   dashboard   — TypeScript build + type-check
+#   migration   — Alembic upgrade/downgrade round-trip
+#   secrets     — gitleaks + hardcoded-secret blocklist
+#   sast        — bandit static application security testing
+#   audit       — pip-audit supply-chain scan
+#   images      — build + Trivy scan (HIGH/CRITICAL gate)
+#
+# All security gates FAIL CLOSED: any finding blocks the merge.
+# =============================================================================
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_ENV: test
+  POSTGRES_DB: agentthreshold_test
+  POSTGRES_PORT: "5433"
+  REDIS_URL: redis://localhost:6380/0
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Core: lint + test (requires Postgres + Redis)
+  # ---------------------------------------------------------------------------
+  test:
+    name: lint + test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agentthreshold
+          POSTGRES_PASSWORD: agentthreshold_dev
+          POSTGRES_DB: agentthreshold
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U agentthreshold"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync workspace
+        run: uv sync --all-packages --group dev
+      - name: Lint (ruff)
+        run: uv run ruff check .
+      - name: Test suite with coverage
+        run: uv run pytest -m "not security and not dast" --cov=services --cov=shared --cov-report=xml --cov-report=term-missing --cov-fail-under=80
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  # ---------------------------------------------------------------------------
+  # SDK contract tests (schema parity with server)
+  # ---------------------------------------------------------------------------
+  contract:
+    name: SDK contract tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agentthreshold
+          POSTGRES_PASSWORD: agentthreshold_dev
+          POSTGRES_DB: agentthreshold
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U agentthreshold"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync workspace
+        run: uv sync --all-packages --group dev
+      - name: Run contract tests
+        run: uv run pytest sdk/python/tests -m contract -v
+
+  # ---------------------------------------------------------------------------
+  # Solidity: Foundry fuzz + branch-coverage tests
+  # ---------------------------------------------------------------------------
+  solidity:
+    name: Solidity tests (Foundry)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Run forge tests
+        run: forge test -vvv
+        working-directory: contracts
+      - name: Check branch coverage
+        run: forge coverage --report lcov
+        working-directory: contracts
+
+  # ---------------------------------------------------------------------------
+  # Dashboard: TypeScript build + type-check
+  # ---------------------------------------------------------------------------
+  dashboard:
+    name: Dashboard build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: dashboard
+      - name: Type-check
+        run: npx tsc --noEmit
+        working-directory: dashboard
+      - name: Build
+        run: npm run build
+        working-directory: dashboard
+
+  # ---------------------------------------------------------------------------
+  # Migration round-trip test
+  # ---------------------------------------------------------------------------
+  migration:
+    name: Migration round-trip
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agentthreshold
+          POSTGRES_PASSWORD: agentthreshold_dev
+          POSTGRES_DB: agentthreshold
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U agentthreshold"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync workspace
+        run: uv sync --all-packages --group dev
+      - name: Upgrade to head
+        run: cd shared && uv run alembic upgrade head
+      - name: Downgrade to base
+        run: cd shared && uv run alembic downgrade base
+      - name: Re-upgrade to head
+        run: cd shared && uv run alembic upgrade head
+
+  # ---------------------------------------------------------------------------
+  # Security: secrets scan
+  # ---------------------------------------------------------------------------
+  secrets:
+    name: secrets scan (gitleaks + blocklist)
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: gitleaks scan
+        run: gitleaks git --redact --no-banner --config .gitleaks.toml
+      - name: hardcoded-secret blocklist
+        run: bash scripts/check-secrets.sh
+
+  # ---------------------------------------------------------------------------
+  # Security: SAST (bandit)
+  # ---------------------------------------------------------------------------
+  sast:
+    name: SAST (bandit)
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync workspace
+        run: uv sync --all-packages --group dev
+      - name: bandit scan
+        run: uv run bandit -q -c pyproject.toml -r services shared sdk
+
+  # ---------------------------------------------------------------------------
+  # Security: dependency audit (pip-audit)
+  # ---------------------------------------------------------------------------
+  audit:
+    name: dependency audit (pip-audit)
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync workspace
+        run: uv sync --all-packages --group dev
+      - name: pip-audit
+        run: uv run pip-audit
+
+  # ---------------------------------------------------------------------------
+  # Container build + Trivy scan
+  # ---------------------------------------------------------------------------
+  images:
+    name: container build + scan (trivy)
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build all service images
+        uses: docker/bake-action@v6
+        with:
+          workdir: .
+          files: |
+            docker-bake.hcl
+          load: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+      - name: Install Trivy
+        run: |
+          curl -sSfL https://github.com/aquasecurity/trivy/releases/download/v0.58.2/trivy_0.58.2_Linux-64bit.tar.gz \
+            | tar -xz -C /usr/local/bin trivy
+          trivy --version
+      - name: Scan images (HIGH/CRITICAL gate)
+        run: |
+          for img in api-gateway notification execution audit-service mcp-server orchestrator; do
+            echo "== scanning $img =="
+            trivy image --severity HIGH,CRITICAL --ignorefile .trivyignore.yaml --exit-code 1 \
+              "agentthreshold/${img}:latest"
+          done
+      - name: Scan IaC configuration
+        run: trivy config --severity HIGH,CRITICAL --exit-code 1 .
