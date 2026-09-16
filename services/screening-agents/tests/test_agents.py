@@ -101,3 +101,125 @@ def test_malformed_schema_fails_closed():
 
     with pytest.raises(LLMSchemaError):
         BadClient().complete("s", "u", __import__("screening_agents.schemas", fromlist=["IntentClassification"]).IntentClassification)
+
+
+def test_classifier_transfer_action(mock_llm):
+    result = IntentClassifier(mock_llm).classify("send 5 ETH to alice")
+    assert result.action_class == ActionClass.TRANSFER
+
+
+def test_classifier_contract_interaction(mock_llm):
+    result = IntentClassifier(mock_llm).classify("deploy a new token contract")
+    assert result.action_class == ActionClass.CONTRACT_INTERACTION
+
+
+def test_classifier_none_task_context(mock_llm):
+    result = IntentClassifier(mock_llm).classify(None)
+    assert isinstance(result.action_class, ActionClass)
+    assert 0.0 <= result.confidence <= 1.0
+
+
+def test_classifier_empty_task_context(mock_llm):
+    result = IntentClassifier(mock_llm).classify("")
+    assert isinstance(result.action_class, ActionClass)
+
+
+def test_classifier_with_tool_call_history(mock_llm):
+    result = IntentClassifier(mock_llm).classify(
+        "swap tokens", tool_call_history=["approve_token", "swap_exact"]
+    )
+    assert result.action_class == ActionClass.SWAP
+
+
+def test_interpreter_empty_state_diff(mock_llm):
+    result = SimulationInterpreter(mock_llm).interpret({})
+    assert isinstance(result.risk_level, RiskLevel)
+    assert isinstance(result.balance_drain, bool)
+
+
+def test_interpreter_non_drain_risk(mock_llm):
+    result = SimulationInterpreter(mock_llm).interpret(
+        {"before": {"USDC": "1000"}, "after": {"USDC": "950"}}
+    )
+    assert result.balance_drain is False
+    assert result.risk_level in (RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL)
+
+
+def test_escalation_drafter_empty_anomaly_factors(mock_llm):
+    result = EscalationDrafter(mock_llm).draft(
+        agent_name="test-agent",
+        action_summary="simple transfer",
+        anomaly_factors=[],
+        policy_reasons=[],
+    )
+    assert result.title
+    assert result.summary
+    assert isinstance(result.recommended_action.value, str)
+
+
+def test_escalation_drafter_prompt_version(mock_llm):
+    drafter = EscalationDrafter(mock_llm)
+    assert drafter.prompt_version.startswith("escalation.")
+
+
+def test_classifier_prompt_version(mock_llm):
+    classifier = IntentClassifier(mock_llm)
+    assert classifier.prompt_version.startswith("classifier.")
+
+
+def test_interpreter_prompt_version(mock_llm):
+    interpreter = SimulationInterpreter(mock_llm)
+    assert interpreter.prompt_version.startswith("interpreter.")
+
+
+def test_circuit_breaker_resets_after_success(mock_llm):
+    client = MockClient()
+    for _ in range(2):
+        client.circuit.record_failure()
+    assert client.circuit.is_open() is False  # below threshold
+    client.circuit.record_success()
+    assert client.circuit._consecutive_failures == 0
+
+
+def test_circuit_breaker_does_not_trip_below_threshold(mock_llm):
+    from screening_agents.schemas import IntentClassification
+
+    client = MockClient()
+    client.circuit.record_failure()
+    client.circuit.record_failure()
+    assert client.circuit.is_open() is False
+    result = client.complete("s", "u swap tokens", IntentClassification)
+    assert result.action_class == ActionClass.SWAP
+
+
+def test_schema_error_records_failure(mock_llm):
+    class BadClient(MockClient):
+        def _complete(self, system, user, schema):
+            return {"action_class": "bogus", "confidence": 0.5}
+
+    client = BadClient()
+    with pytest.raises(LLMSchemaError):
+        client.complete("s", "u", __import__("screening_agents.schemas", fromlist=["IntentClassification"]).IntentClassification)
+    assert client.circuit._consecutive_failures == 1
+
+
+def test_interpreter_risk_level_valid_enum(mock_llm):
+    result = SimulationInterpreter(mock_llm).interpret({"data": "test"})
+    assert result.risk_level in (RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL)
+
+
+def test_escalation_draft_risk_tags_present(mock_llm):
+    result = SimulationInterpreter(mock_llm).interpret(
+        {"note": "drain detected in swap"}
+    )
+    assert isinstance(result.risk_tags, list)
+
+
+def test_mock_client_model_name():
+    client = MockClient()
+    assert client.model == "mock-deterministic-v1"
+
+
+def test_mock_client_timeout_inherited():
+    client = MockClient(timeout_ms=500)
+    assert client.timeout_ms == 500

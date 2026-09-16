@@ -125,14 +125,20 @@ def make_policy(db_session):
 
 @pytest.fixture()
 def make_api_key(db_session):
+    _counter = 0
+
     def _make(org_id, *, agent_ids=()):
+        nonlocal _counter
+        import uuid as _uuid
+
         from at_shared.api_keys import hash_api_key
 
-        raw = "at_orch_test_key_000000000000000000000000000000000000"
+        _counter += 1
+        raw = f"at_orch_test_key_{_counter}_{_uuid.uuid4().hex[:16]}"
         key = ApiKey(
             id=uuid7(),
             org_id=org_id,
-            name="orch-test",
+            name=f"orch-test-{_counter}",
             key_hash=hash_api_key(raw),
             key_prefix="at_orch_test",
             agent_ids=list(agent_ids),
