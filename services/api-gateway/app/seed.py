@@ -38,9 +38,10 @@ def seed() -> None:
                 role="admin",
                 password_hash=hash_password(settings.bootstrap_admin_password),
                 is_active=True,
+                must_change_password=True,
             )
             db.add(admin)
-            log.info("created admin %s", admin.email)
+            log.info("created admin %s (must change password)", admin.email)
 
         db.commit()
         log.info("seed complete")

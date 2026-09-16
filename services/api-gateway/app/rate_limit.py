@@ -65,7 +65,7 @@ def rate_limit_middleware(
             return await call_next(request)
 
         org_id = request.headers.get("x-org-id")
-        key = f"rl:{org_id or 'anon'}"
+        key = f"rl:{org_id}" if org_id else f"rl:ip:{_client_ip(request)}"
         allowed, retry_after = _token_bucket_allowed(key, capacity, refill_per_sec)
         if not allowed:
             status = 503 if retry_after < 0 else 429

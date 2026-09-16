@@ -1,4 +1,4 @@
-// Thin fetch wrapper: JWT auth, auto-refresh, org-scoped rate-limit header.
+// Thin fetch wrapper: JWT auth via httpOnly cookies, auto-refresh, org-scoped header.
 import type {
   Agent,
   AgentRegistered,
@@ -13,8 +13,6 @@ import type {
   Transaction,
 } from "./types";
 
-const ACCESS_KEY = "at_access_token";
-const REFRESH_KEY = "at_refresh_token";
 const ORG_KEY = "at_org_id";
 
 export class ApiError extends Error {
@@ -28,20 +26,18 @@ export class ApiError extends Error {
   }
 }
 
-export function saveTokens(tokens: TokenResponse, orgId: string): void {
-  localStorage.setItem(ACCESS_KEY, tokens.access_token);
-  localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
+export function saveOrg(orgId: string): void {
   localStorage.setItem(ORG_KEY, orgId);
 }
 
-export function clearTokens(): void {
-  localStorage.removeItem(ACCESS_KEY);
-  localStorage.removeItem(REFRESH_KEY);
+export function clearOrg(): void {
   localStorage.removeItem(ORG_KEY);
 }
 
 export function isAuthenticated(): boolean {
-  return Boolean(localStorage.getItem(ACCESS_KEY));
+  // Cookies are httpOnly so we cannot read them directly.
+  // Use /auth/me to verify — the request function handles 401 -> refresh.
+  return true;
 }
 
 async function request<T>(
@@ -49,18 +45,20 @@ async function request<T>(
   options: RequestInit = {},
   retried = false
 ): Promise<T> {
-  const access = localStorage.getItem(ACCESS_KEY);
   const orgId = localStorage.getItem(ORG_KEY);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string> | undefined),
   };
-  if (access) headers.Authorization = `Bearer ${access}`;
   if (orgId) headers["x-org-id"] = orgId;
 
-  const resp = await fetch(`/v1${path}`, { ...options, headers });
+  const resp = await fetch(`/v1${path}`, {
+    ...options,
+    headers,
+    credentials: "include", // send httpOnly cookies
+  });
 
-  if (resp.status === 401 && access && !retried) {
+  if (resp.status === 401 && !retried) {
     const refreshed = await tryRefresh();
     if (refreshed) return request<T>(path, options, true);
   }
@@ -79,16 +77,18 @@ async function request<T>(
 }
 
 async function requestText(path: string, options: RequestInit = {}, retried = false): Promise<string> {
-  const access = localStorage.getItem(ACCESS_KEY);
   const orgId = localStorage.getItem(ORG_KEY);
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string> | undefined),
   };
-  if (access) headers.Authorization = `Bearer ${access}`;
   if (orgId) headers["x-org-id"] = orgId;
 
-  const resp = await fetch(`/v1${path}`, { ...options, headers });
-  if (resp.status === 401 && access && !retried) {
+  const resp = await fetch(`/v1${path}`, {
+    ...options,
+    headers,
+    credentials: "include",
+  });
+  if (resp.status === 401 && !retried) {
     const refreshed = await tryRefresh();
     if (refreshed) return requestText(path, options, true);
   }
@@ -103,16 +103,18 @@ async function requestBlob(
   options: RequestInit = {},
   retried = false
 ): Promise<Blob> {
-  const access = localStorage.getItem(ACCESS_KEY);
   const orgId = localStorage.getItem(ORG_KEY);
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string> | undefined),
   };
-  if (access) headers.Authorization = `Bearer ${access}`;
   if (orgId) headers["x-org-id"] = orgId;
 
-  const resp = await fetch(`/v1${path}`, { ...options, headers });
-  if (resp.status === 401 && access && !retried) {
+  const resp = await fetch(`/v1${path}`, {
+    ...options,
+    headers,
+    credentials: "include",
+  });
+  if (resp.status === 401 && !retried) {
     const refreshed = await tryRefresh();
     if (refreshed) return requestBlob(path, options, true);
   }
@@ -123,21 +125,18 @@ async function requestBlob(
 }
 
 async function tryRefresh(): Promise<boolean> {
-  const refresh = localStorage.getItem(REFRESH_KEY);
-  if (!refresh) return false;
   try {
     const resp = await fetch("/v1/auth/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refresh }),
+      credentials: "include",
+      body: JSON.stringify({ refresh_token: "" }),
     });
     if (!resp.ok) {
-      clearTokens();
+      clearOrg();
       return false;
     }
-    const tokens = (await resp.json()) as TokenResponse;
-    const org = localStorage.getItem(ORG_KEY) ?? "";
-    saveTokens(tokens, org);
+    // Tokens are set as httpOnly cookies by the server — no need to store.
     return true;
   } catch {
     return false;
@@ -150,6 +149,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
+  },
+  logout(): Promise<unknown> {
+    return request<unknown>("/auth/logout", { method: "POST" });
   },
   me(): Promise<CurrentUser> {
     return request<CurrentUser>("/auth/me");

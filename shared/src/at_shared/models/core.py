@@ -63,6 +63,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(40), nullable=False)  # admin|approver|auditor|developer
     password_hash: Mapped[str | None] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    must_change_password: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[CreatedAt]
     updated_at: Mapped[UpdatedAt]
 

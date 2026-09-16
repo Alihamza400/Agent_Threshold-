@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { api, clearTokens, isAuthenticated, saveTokens } from "../api/client";
+import { api, clearOrg, saveOrg } from "../api/client";
 import type { CurrentUser } from "../api/types";
 
 interface AuthContextValue {
@@ -17,27 +17,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!isAuthenticated()) {
-      setReady(true);
-      return;
-    }
+    // Try /auth/me — cookies are sent automatically.
     api
       .me()
       .then(setUser)
-      .catch(() => clearTokens())
+      .catch(() => clearOrg())
       .finally(() => setReady(true));
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const tokens = await api.login(email, password);
-    saveTokens(tokens, "");
+    await api.login(email, password);
+    // Tokens are set as httpOnly cookies by the server.
     const me = await api.me();
-    localStorage.setItem("at_org_id", me.org_id);
+    saveOrg(me.org_id);
     setUser(me);
   }, []);
 
   const logout = useCallback(() => {
-    clearTokens();
+    api.logout().catch(() => {});
+    clearOrg();
     setUser(null);
   }, []);
 

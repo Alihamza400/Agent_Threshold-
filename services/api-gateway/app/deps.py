@@ -10,7 +10,7 @@ from at_shared.db import get_db
 from at_shared.models import ApiKey, User
 from at_shared.schemas.auth import CurrentUser
 from at_shared.security import decode_token
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,12 +31,25 @@ def _forbidden(detail: str = "Insufficient permissions") -> HTTPException:
 # --------------------------------------------------------------------------
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    request: Request = None,  # type: ignore[assignment]
     db: Session = Depends(get_db),
 ) -> CurrentUser:
-    if credentials is None:
+    """Resolve the current user from JWT (Authorization header or httpOnly cookie)."""
+    token = None
+
+    # 1. Try Authorization header first (API key auth, SDK clients)
+    if credentials is not None:
+        token = credentials.credentials
+
+    # 2. Fall back to httpOnly cookie (dashboard SPA)
+    if token is None and request is not None:
+        token = request.cookies.get("at_access_token")
+
+    if not token:
         raise _unauthorized()
+
     try:
-        payload = decode_token(credentials.credentials, "access")
+        payload = decode_token(token, "access")
     except pyjwt.PyJWTError as exc:
         raise _unauthorized("Invalid or expired token") from exc
 
@@ -85,7 +98,8 @@ def get_api_key_context(
     if record is None or not record.is_active:
         raise _unauthorized("Invalid API key")
 
+    # Fire-and-forget: update last_used_at without blocking the request.
+    # The session commit happens at the end of the request via get_db().
     record.last_used_at = datetime.now(UTC)
     db.add(record)
-    db.commit()
     return {"org_id": record.org_id, "agent_ids": set(record.agent_ids or [])}

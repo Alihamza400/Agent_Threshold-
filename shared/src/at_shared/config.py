@@ -4,8 +4,12 @@ All settings are read from environment variables (see `.env.example`).
 Secrets are never hardcoded; production secrets come from Vault/KMS.
 """
 
+from __future__ import annotations
+
+import sys
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -55,88 +59,77 @@ class Settings(BaseSettings):
     escalation_ttl_minutes: int = 60
 
     # Escalation notification service (Phase 8.4).
-    # Per-org delivery endpoint mapping, format: "org_id=url" pairs separated
-    # by commas (e.g. "org1=https://hooks.slack.com/... ,org2=https://.../hook").
-    # The endpoint receives a POST with the escalation payload JSON. Empty
-    # means delivery is disabled (queue-only) — the human queue still works.
     notification_webhooks: str = ""
-    # Slack-style hook semantics: when true, the payload is wrapped in the
-    # Slack incoming-webhook envelope ({ "text": ... }).
     notification_slack_format: bool = True
-    # Delivery retry policy (target: 99% delivered within 5s of creation).
     notify_poll_seconds: float = 0.5
     notify_max_attempts: int = 8
     notify_backoff_base_seconds: float = 1.0
 
+    # Incident response / on-call paging (Phase 9.6).
+    pagerduty_routing_key: str = ""
+    incident_webhook_url: str = ""
+    incident_api_token: str = "change_me_incident_api_token"
+    incident_poll_seconds: float = 0.5
+    incident_max_attempts: int = 8
+    incident_backoff_base_seconds: float = 1.0
+
     # Execution adapter (task 8.5).
-    # Internal service-to-service API key for the execution endpoints (from
-    # the secrets manager in production; the gateway passes it through).
     execution_api_key: str = "change_me_execution_key"
-    # Poll cadence for the confirm/reorg/stuck worker.
     execution_poll_seconds: float = 1.0
-    # A broadcast tx with no receipt after this many seconds is flagged stuck
-    # and triggers the RBF/cancel re-screen flow (TRD 5.10).
     execution_stuck_after_seconds: float = 60.0
-    # Single-use decision token lifetime (seconds). The signed tx must be
-    # submitted within this window or a new token must be issued (re-approval
-    # is NOT automatic — fail-closed).
     decision_token_ttl_seconds: int = 300
-    # RBF/cancel replacement: gas price bump above the original (percent).
     execution_rbf_gas_bump_pct: float = 20.0
     execution_cancel_gas_bump_pct: float = 20.0
-    # Max broadcast attempts (exponential backoff) before surfacing an alert.
     execution_max_broadcast_attempts: int = 5
     execution_backoff_base_seconds: float = 2.0
 
-    # An APPROVE from the deterministic policy engine is downgraded to
-    # ESCALATE when the aggregate advisory confidence (0-100) falls below this
-    # threshold (Phase 8 orchestrator, 8.3).
     escalate_below_confidence: float = 60.0
-
-    # Simulation enforcement in the screening pipeline (Phase 8 orchestrator).
-    #   "required" (default, production): a missing/failed simulation backend
-    #     fails closed -> escalate, never approve (SR-04, zero silent bypass).
-    #   "disabled": skips simulation entirely. DEV/TEST ONLY — production must
-    #     never run with simulation disabled.
     simulation_mode: str = "required"
 
     # Blockchain (Phase 5)
-    # Primary + fallback RPC endpoints per chain, comma-separated if more.
     eth_rpc_url: str = ""
     eth_rpc_fallback_url: str = ""
     base_rpc_url: str = ""
     base_rpc_fallback_url: str = ""
-    # Gas safety buffer (fraction above eth_estimateGas) — default 20%.
     gas_buffer_pct: float = 20.0
-    # Default confirmation depth: 2 for L2, 12 for mainnet.
     eth_confirmations: int = 12
     base_confirmations: int = 2
-    # Anvil (fork-per-request simulation). Empty => use process spawn on PATH.
     anvil_rpc_url: str = ""
-    # Chainlink aggregator addresses (ETH/USD). Empty => fallback oracle.
     eth_usd_aggregator: str = ""
-    # RPC timeout (seconds) — fail-closed on slow providers.
     rpc_timeout_seconds: float = 5.0
 
     # On-chain audit anchoring (Phase 6.6, FR-AUDIT-01).
-    # RPC endpoint the anchor worker submits through; the audit contract lives
-    # on the chain this endpoint serves. EIP-155 chain id for transaction
-    # signing (anvil defaults to 31337).
     anchor_rpc_url: str = ""
     anchor_chain_id: int = 31337
-    # AuditAnchor (proxy) address the service submits Merkle roots to.
     anchor_contract_address: str = ""
-    # EOA that is an `isAuthorizedAnchor` on the contract. Loaded from a
-    # secret store (Vault/KMS) in production, never committed.
     anchor_wallet_private_key: str = ""
-    # Batching cadence (6.6): flush every `anchor_batch_max_records` records
-    # or `anchor_batch_interval_seconds` whichever comes first.
     anchor_batch_max_records: int = 1000
     anchor_batch_interval_seconds: float = 900.0
-    # Confirmation depth and submission retry/backoff for the worker.
     anchor_confirmations: int = 1
     anchor_max_attempts: int = 5
     anchor_backoff_base_seconds: float = 5.0
+
+    @model_validator(mode="after")
+    def _reject_default_secrets_in_production(self) -> Settings:
+        """Fail-fast on startup if well-known placeholder secrets are used in production."""
+        if not self.is_production:
+            return self
+
+        default_secrets: dict[str, str] = {
+            "jwt_secret": "change_me_generate_a_long_random_secret",
+            "bootstrap_admin_password": "ChangeMe_Str0ng!",
+            "execution_api_key": "change_me_execution_key",
+            "incident_api_token": "change_me_incident_api_token",
+        }
+        violations = [k for k, default in default_secrets.items() if getattr(self, k) == default]
+        if violations:
+            msg = (
+                f"SECURITY: Refusing to start in production with default secrets: "
+                f"{', '.join(violations)}. Set these via environment variables or Vault/KMS."
+            )
+            print(msg, file=sys.stderr)
+            raise ValueError(msg)
+        return self
 
     @property
     def database_url(self) -> str:
