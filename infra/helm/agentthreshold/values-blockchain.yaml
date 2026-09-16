@@ -1,0 +1,26 @@
+# Per-service overrides for blockchain
+replicaCount: 1
+
+appModule: "blockchain.main:app"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 75
+
+env:
+  LOG_LEVEL: "INFO"
+  CHAIN_ID: "8453"
+
+secrets:
+  ETH_RPC_URL: "CHANGE_ME"
+  ETH_RPC_FALLBACK_URL: ""

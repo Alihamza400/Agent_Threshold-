@@ -1,0 +1,46 @@
+# Per-service overrides for api-gateway
+replicaCount: 2
+
+image:
+  repository: agentthreshold
+  tag: "latest"
+
+appModule: "app.main:app"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 75
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+  hosts:
+    - host: api.agentthreshold.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - api.agentthreshold.local
+      secretName: api-gateway-tls
+
+env:
+  LOG_LEVEL: "INFO"
+  APP_ENV: "production"
+  JWT_ACCESS_TTL_MINUTES: "15"
+  JWT_REFRESH_TTL_HOURS: "24"
+
+secrets:
+  JWT_SECRET: "CHANGE_ME"

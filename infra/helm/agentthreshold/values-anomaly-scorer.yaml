@@ -1,0 +1,21 @@
+# Per-service overrides for anomaly-scorer
+replicaCount: 2
+
+appModule: "anomaly_scorer.main:app"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 75
+
+env:
+  LOG_LEVEL: "INFO"

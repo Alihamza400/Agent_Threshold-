@@ -1,0 +1,24 @@
+# Per-service overrides for screening-agents
+replicaCount: 2
+
+appModule: "screening_agents.main:app"
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+env:
+  LOG_LEVEL: "INFO"
+
+secrets:
+  ANTHROPIC_API_KEY: "CHANGE_ME"

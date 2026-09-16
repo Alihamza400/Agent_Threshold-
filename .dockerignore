@@ -1,0 +1,28 @@
+# VCS / local dev
+.git
+.gitignore
+.venv
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Tests, docs, packaging, IaC (not part of runtime images)
+tests
+services/**/tests
+dashboard
+docs
+infra
+contracts
+prompt-registry
+*.md
+*.docx
+IMPLEMENTATION_PLAN.md
+Makefile
+
+# Local DB/redis data
+.postgres-data
+*.log

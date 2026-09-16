@@ -1,0 +1,42 @@
+# Production environment overrides
+image:
+  tag: "stable"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 75
+
+resources:
+  limits:
+    cpu: "1"
+    memory: 1Gi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: agentthreshold.io
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - agentthreshold.io
+      secretName: prod-tls
+
+env:
+  APP_ENV: "production"
+  LOG_LEVEL: "WARNING"

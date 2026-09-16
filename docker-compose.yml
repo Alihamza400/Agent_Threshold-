@@ -1,6 +1,7 @@
 # =====================================================================
-# AgentThreshold — Local Development Infrastructure (Phase 1)
+# AgentThreshold — Local Development Infrastructure
 # Postgres (HA-ready config) + Redis (locks/rate-limit/cache)
+# Optional: API gateway + orchestrator for full-stack local testing
 # =====================================================================
 
 name: agentthreshold
@@ -25,7 +26,7 @@ services:
     command:
       - "postgres"
       - "-c"
-      - "wal_level=logical"          # enables PITR / logical replication (RPO target)
+      - "wal_level=logical"
 
   redis:
     image: redis:7-alpine
@@ -44,3 +45,63 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+      args:
+        SERVICE: api-gateway
+    container_name: at-api-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: development
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-agentthreshold}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentthreshold_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-agentthreshold}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-not-for-production}
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/healthz').raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+      args:
+        SERVICE: orchestrator
+    container_name: at-orchestrator
+    ports:
+      - "8001:8001"
+    environment:
+      APP_ENV: development
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-agentthreshold}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentthreshold_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-agentthreshold}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/healthz').raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

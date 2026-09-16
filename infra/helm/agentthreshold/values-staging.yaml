@@ -1,0 +1,37 @@
+# Staging environment overrides
+image:
+  tag: "staging"
+
+replicaCount: 2
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: staging.agentthreshold.io
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - staging.agentthreshold.io
+      secretName: staging-tls
+
+env:
+  APP_ENV: "staging"
+  LOG_LEVEL: "INFO"

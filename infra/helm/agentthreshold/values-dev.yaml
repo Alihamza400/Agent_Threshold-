@@ -1,0 +1,33 @@
+# Dev environment overrides
+image:
+  tag: "dev"
+  pullPolicy: Always
+
+replicaCount: 1
+
+autoscaling:
+  enabled: false
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: dev.agentthreshold.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+env:
+  APP_ENV: "development"
+  LOG_LEVEL: "DEBUG"
+
+secrets:
+  JWT_SECRET: "dev-jwt-secret-not-for-production"

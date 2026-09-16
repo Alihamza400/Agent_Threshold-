@@ -1,0 +1,12 @@
+apiVersion: v2
+name: agentthreshold
+description: Helm chart for AgentThreshold microservices
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - agentthreshold
+  - transaction-firewall
+  - ai-agents
+maintainers:
+  - name: AgentThreshold Team

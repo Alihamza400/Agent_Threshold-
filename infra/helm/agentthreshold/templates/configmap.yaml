@@ -1,0 +1,13 @@
+{{- $configmapName := include "agentthreshold.configmapName" . -}}
+{{- if and $configmapName .Values.env }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $configmapName }}
+  labels:
+    {{- include "agentthreshold.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}

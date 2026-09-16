@@ -1,0 +1,26 @@
+# Per-service overrides for notification
+replicaCount: 2
+
+appModule: "notification_service.main:app"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 75
+
+env:
+  LOG_LEVEL: "INFO"
+
+secrets:
+  PAGERDUTY_ROUTING_KEY: ""
+  INCIDENT_WEBHOOK_URL: ""
+  INCIDENT_API_TOKEN: "CHANGE_ME"
