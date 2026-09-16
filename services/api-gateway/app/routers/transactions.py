@@ -15,7 +15,8 @@ from datetime import UTC, datetime
 
 from app.deps import get_api_key_context, require_admin, require_auditor_or_above
 from at_shared.db import get_db
-from at_shared.models import Agent, Transaction
+from at_shared.models import Agent, Incident, Transaction
+from at_shared.models.incident import IncidentSeverity, IncidentSource
 from at_shared.schemas.auth import CurrentUser
 from at_shared.schemas.tx import Decision, DecisionType, ScreenRequest, TransactionRead
 from at_shared.uuid7 import uuid7
@@ -67,10 +68,16 @@ async def screen_transaction(
         return _fail_closed("agent not in API key scope")
 
     # ---- pipeline delegation ---------------------------------------------
+    # Backend failure fails closed as a 503 (SR-04): the caller must NOT sign or
+    # broadcast when the outcome is unknown. The SDK maps 5xx to
+    # ScreeningUnavailableError (raise), so no agent ever signs on an outage.
     try:
         result = await _pipeline.screen(body, org_id=api_ctx["org_id"], trace_id=trace_id)
-    except Exception as exc:  # noqa: BLE001 - backend failure must fail closed
-        return _fail_closed(f"screening pipeline unavailable: {exc}")
+    except Exception as exc:  # noqa: BLE001 - backend failure must fail closed (503)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Screening unavailable: {exc}",
+        ) from exc
     return result.decision
 
 
@@ -141,8 +148,6 @@ def kill_switch(
 ) -> dict:
     scope = body.scope
     reason = body.reason
-    if scope not in {"agent", "org"}:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "scope must be 'agent' or 'org'")
 
     now = datetime.now(UTC)
     if scope == "agent":
@@ -162,6 +167,27 @@ def kill_switch(
             a.halt_reason = reason
             a.halted_at = now
 
+    db.commit()
+
+    # IR hook (9.6): a kill-switch activation is a critical ops event — page
+    # on-call through the notification service's incident outbox. The gateway
+    # writes the incident row into the shared DB; the notification worker
+    # owns PagerDuty delivery (dedup key = incident id).
+    incident = Incident(
+        id=uuid7(),
+        source=IncidentSource.KILL_SWITCH.value,
+        severity=(
+            IncidentSeverity.CRITICAL.value
+            if scope == "org"
+            else IncidentSeverity.HIGH.value
+        ),
+        title=f"Kill-switch {scope} activated",
+        summary=f"Kill-switch {scope} activated by {admin.email}: {reason or 'no reason given'}",
+        org_id=admin.org_id,
+        agent_id=body.agent_id if scope == "agent" else None,
+        detected_at=now,
+    )
+    db.add(incident)
     db.commit()
     return {"halted": True, "scope": scope, "effective_at": now.isoformat()}
 
@@ -190,4 +216,26 @@ def resume_kill_switch(
         a.halt_reason = None
         a.halted_at = None
     db.commit()
+
+    # IR hook (9.6): resolving the kill-switch resolves the open incident(s) it
+    # created; the notification worker sends the PagerDuty "resolve" event.
+    if scope == "agent":
+        incident_filter = Incident.agent_id == agent_id
+    else:
+        incident_filter = Incident.agent_id.is_(None)
+    active = db.scalars(
+        select(Incident).where(
+            Incident.source == IncidentSource.KILL_SWITCH.value,
+            Incident.org_id == admin.org_id,
+            incident_filter,
+            Incident.status.in_(("open", "acknowledged")),
+        )
+    ).all()
+    for incident in active:
+        incident.status = "resolved"
+        incident.resolved_at = now
+        incident.resolve_event_pending = True
+    if active:
+        db.commit()
+
     return {"halted": False, "scope": scope, "effective_at": now.isoformat()}

@@ -19,11 +19,13 @@ class ChainConfig:
         rpc_urls: list[str],
         confirmations: int,
         eth_usd_aggregator: str = "",
+        rpc_timeout_seconds: float = 5.0,
     ) -> None:
         self.chain_id = chain_id
         self.rpc_urls = tuple(u for u in rpc_urls if u)
         self.confirmations = confirmations
         self.eth_usd_aggregator = eth_usd_aggregator
+        self.rpc_timeout_seconds = rpc_timeout_seconds
 
     @property
     def is_configured(self) -> bool:
@@ -39,16 +41,19 @@ def load_chain_configs() -> dict[ChainId, ChainConfig]:
             [s.eth_rpc_url, s.eth_rpc_fallback_url],
             s.eth_confirmations,
             s.eth_usd_aggregator,
+            s.rpc_timeout_seconds,
         ),
         ChainId.BASE: ChainConfig(
             ChainId.BASE,
             [s.base_rpc_url, s.base_rpc_fallback_url],
             s.base_confirmations,
+            rpc_timeout_seconds=s.rpc_timeout_seconds,
         ),
         ChainId.ARBITRUM: ChainConfig(
             ChainId.ARBITRUM,
             [],
             s.base_confirmations,
+            rpc_timeout_seconds=s.rpc_timeout_seconds,
         ),
     }
 

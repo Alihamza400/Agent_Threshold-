@@ -43,7 +43,7 @@ def _unhex(value: str) -> int:
 class RPCClient:
     def __init__(self, chain: ChainConfig, http: httpx.AsyncClient | None = None) -> None:
         self.chain = chain
-        self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(5.0))
+        self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(chain.rpc_timeout_seconds))
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -144,25 +144,33 @@ class SyncRPC:
 
     def __init__(self, chain: ChainConfig) -> None:
         self.chain = chain
+        self._client = httpx.Client(
+            timeout=httpx.Timeout(chain.rpc_timeout_seconds or 5.0),
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+
+    def close(self) -> None:
+        self._client.close()
 
     def _call(self, method: str, params: Sequence[Any]) -> Any:
-        with httpx.Client(timeout=httpx.Timeout(5.0)) as http:
-            client = RPCClient(self.chain, http)
-            try:
-                result = client.call(method, params)
-            finally:
-                http.close()
-            return result
+        rpc = RPCClient(self.chain, self._client)
+        return rpc.call(method, params)
 
     def get_transaction_count(self, address: str, block: str = "latest") -> int:
         return _unhex(self._call("eth_getTransactionCount", [address, block]))
 
 
+# Module-level persistent client for gas_price_rpc (avoids per-call creation).
+_gas_client: httpx.Client | None = None
+
+
 def gas_price_rpc(chain: ChainConfig) -> int:
-    """Fetch current gas price (wei) via a short-lived sync client."""
-    with httpx.Client(timeout=httpx.Timeout(5.0)) as http:
-        client = RPCClient(chain, http)
-        try:
-            return _unhex(client.call("eth_gasPrice", []))
-        finally:
-            http.close()
+    """Fetch current gas price (wei) via a persistent sync client."""
+    global _gas_client
+    if _gas_client is None or _gas_client.is_closed:
+        _gas_client = httpx.Client(
+            timeout=httpx.Timeout(chain.rpc_timeout_seconds or 5.0),
+            limits=httpx.Limits(max_connections=5, max_keepalive_connections=3),
+        )
+    rpc = RPCClient(chain, _gas_client)
+    return _unhex(rpc.call("eth_gasPrice", []))
