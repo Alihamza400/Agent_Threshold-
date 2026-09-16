@@ -1,13 +1,15 @@
-"""Escalation notification worker loop (task 8.4).
+"""Escalation notification + on-call paging worker loops (8.4, 9.6).
 
-Two responsibilities per tick, in dependency order:
+Per tick, in dependency order:
   1. Expire overdue escalations (fail-closed default reject) — before any
      delivery, so we never notify about something already default-rejected.
-  2. Deliver due notifications through the configured channel(s) with
-     retry/backoff (99% within 5s on a healthy endpoint).
+  2. Deliver due escalation notifications with retry/backoff.
+  3. Page on-call for open incidents and send "resolve" events for resolved
+     incidents (PagerDuty Events v2), each with retry/backoff + lease.
 
-Delivery is best-effort notification; the DB `approvals` row remains the
-source of truth for the human queue regardless of delivery success.
+Delivery is best-effort notification; the DB rows remain the source of truth
+for both the human decision queue and incident history regardless of delivery
+success.
 """
 
 from __future__ import annotations
@@ -20,10 +22,16 @@ from dataclasses import dataclass, field
 from at_shared.config import get_settings
 from at_shared.db import get_session_factory
 from at_shared.models import Agent, Approval, Transaction
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from notification_service.channels import Channel, DeliveryError, NotificationPayload
 from notification_service.expire import expire_overdue
+from notification_service.incidents import (
+    IncidentNotifierError,
+    IncidentOutbox,
+    build_notifier,
+)
 from notification_service.outbox import NotificationOutbox
 
 logger = logging.getLogger("notification_service.worker")
@@ -36,6 +44,8 @@ class NotificationRunner:
     outbox: NotificationOutbox
     channels: dict[str, Channel]  # org_id -> delivery channel
     expiry_ttl_minutes: int
+    incident_outbox: IncidentOutbox = field(default_factory=lambda: IncidentOutbox(get_session_factory()))
+    incident_notifier: object = field(default_factory=lambda: build_notifier())
     session_factory: Callable[[], Session] = field(default=get_session_factory)
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
@@ -58,30 +68,85 @@ class NotificationRunner:
             expires_at=approval.expires_at.isoformat() if approval.expires_at else None,
         )
 
+    def _resolve_payloads_bulk(
+        self, db: Session, approvals: list[Approval]
+    ) -> list[tuple[Approval, NotificationPayload]]:
+        """Batch-load related records and build payloads for all approvals."""
+        tx_ids = {a.transaction_id for a in approvals}
+        agent_ids = {a.agent_id for a in approvals}
+        txns = {
+            tx.id: tx
+            for tx in db.scalars(select(Transaction).where(Transaction.id.in_(tx_ids))).all()
+        } if tx_ids else {}
+        agents = {
+            ag.id: ag
+            for ag in db.scalars(select(Agent).where(Agent.id.in_(agent_ids))).all()
+        } if agent_ids else {}
+        results = []
+        for approval in approvals:
+            tx = txns.get(approval.transaction_id)
+            agent = agents.get(approval.agent_id)
+            payload = NotificationPayload(
+                approval_id=approval.id,
+                org_id=approval.org_id,
+                agent_id=approval.agent_id,
+                agent_name=agent.name if agent else None,
+                transaction_id=approval.transaction_id,
+                chain_id=tx.chain_id if tx else "",
+                from_address=tx.from_address if tx else "",
+                to_address=tx.to_address if tx else None,
+                value_wei=tx.value_wei if tx else 0,
+                risk_summary=approval.risk_summary,
+                reasons=approval.reasons or [],
+                confidence=approval.confidence,
+                expires_at=approval.expires_at.isoformat() if approval.expires_at else None,
+            )
+            results.append((approval, payload))
+        return results
+
     async def tick(self) -> dict[str, int]:
         expire_overdue(self.session_factory, ttl_minutes=self.expiry_ttl_minutes)
         delivered = 0
         retried = 0
-        for approval in self.outbox.claim_due():
-            channel = self.channels.get(approval.org_id)
-            if channel is None:
-                # No delivery endpoint for this org: mark as notified so the
-                # row leaves the delivery queue (human queue unaffected).
+        due = self.outbox.claim_due()
+        if due:
+            with self.session_factory() as db:
+                bulk_payloads = self._resolve_payloads_bulk(db, list(due))
+            for approval, payload in bulk_payloads:
+                channel = self.channels.get(approval.org_id)
+                if channel is None:
+                    self.outbox.mark_delivered(approval.id)
+                    delivered += 1
+                    continue
+                try:
+                    await channel.send(payload)
+                except DeliveryError as exc:
+                    logger.warning("delivery failed for %s: %s", approval.id, exc)
+                    self.outbox.schedule_retry(approval.id, str(exc))
+                    retried += 1
+                    continue
                 self.outbox.mark_delivered(approval.id)
                 delivered += 1
-                continue
-            with self.session_factory() as db:
-                payload = self._resolve_payload(db, approval)
+
+        incidents_paged = 0
+        incidents_retried = 0
+        for incident in self.incident_outbox.claim_due():
             try:
-                await channel.send(payload)
-            except DeliveryError as exc:
-                logger.warning("delivery failed for %s: %s", approval.id, exc)
-                self.outbox.schedule_retry(approval.id, str(exc))
-                retried += 1
+                await self.incident_notifier.send(incident)
+            except IncidentNotifierError as exc:
+                logger.warning("incident paging failed for %s: %s", incident.id, exc)
+                self.incident_outbox.schedule_retry(incident.id, str(exc))
+                incidents_retried += 1
                 continue
-            self.outbox.mark_delivered(approval.id)
-            delivered += 1
-        return {"delivered": delivered, "retried": retried}
+            self.incident_outbox.mark_paged(incident.id)
+            incidents_paged += 1
+
+        return {
+            "delivered": delivered,
+            "retried": retried,
+            "incidents_paged": incidents_paged,
+            "incidents_retried": incidents_retried,
+        }
 
     async def run(self, poll_seconds: float = 0.5) -> None:
         while True:
@@ -112,6 +177,15 @@ def build_runner(
         channels=channels
         or build_channels(settings.notification_webhooks, settings.notification_slack_format),
         expiry_ttl_minutes=ttl_minutes or settings.escalation_ttl_minutes,
+        incident_outbox=IncidentOutbox(
+            factory,
+            max_attempts=settings.incident_max_attempts,
+            backoff_base_seconds=settings.incident_backoff_base_seconds,
+        ),
+        incident_notifier=build_notifier(
+            routing_key=settings.pagerduty_routing_key,
+            webhook_url=settings.incident_webhook_url,
+        ),
         session_factory=factory,
     )
 

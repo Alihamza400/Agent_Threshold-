@@ -270,7 +270,9 @@ class Pipeline:
                 reasons.append(
                     f"simulation reverted: {simulation.revert_reason or 'transaction would fail on-chain'}"
                 )
-            elif final is not DecisionType.REJECT and simulation_error:
+            elif simulation_error:
+                # Fail-closed: simulation could not verify -> always escalate,
+                # even if the policy engine already rejected (extra context for humans).
                 final = DecisionType.ESCALATE
                 reasons.append(simulation_error)
 

@@ -42,6 +42,11 @@ def _expire_overdue(db: Session, org_id: str) -> None:
         )
     ).all()
     if overdue:
+        tx_ids = [a.transaction_id for a in overdue]
+        if tx_ids:
+            db.scalars(
+                select(Transaction).where(Transaction.id.in_(tx_ids))
+            )
         for a in overdue:
             a.status = "expired"
             tx = db.get(Transaction, a.transaction_id)
@@ -60,9 +65,9 @@ def _get_pending(db: Session, approval_id: str, org_id: str) -> Approval:
     return approval
 
 
-def _to_read(db: Session, approval: Approval) -> ApprovalRead:
-    agent = db.get(Agent, approval.agent_id)
-    tx = db.get(Transaction, approval.transaction_id)
+def _to_read(approval: Approval, agents: dict[str, Agent], txns: dict[str, Transaction]) -> ApprovalRead:
+    agent = agents.get(approval.agent_id)
+    tx = txns.get(approval.transaction_id)
     return ApprovalRead(
         id=approval.id,
         org_id=approval.org_id,
@@ -86,6 +91,23 @@ def _to_read(db: Session, approval: Approval) -> ApprovalRead:
     )
 
 
+def _batch_load_related(
+    db: Session, approvals: list[Approval]
+) -> tuple[dict[str, Agent], dict[str, Transaction]]:
+    """Load all agents and transactions referenced by approvals in two queries."""
+    agent_ids = {a.agent_id for a in approvals}
+    tx_ids = {a.transaction_id for a in approvals}
+    agents: dict[str, Agent] = {}
+    txns: dict[str, Transaction] = {}
+    if agent_ids:
+        for agent in db.scalars(select(Agent).where(Agent.id.in_(agent_ids))).all():
+            agents[agent.id] = agent
+    if tx_ids:
+        for tx in db.scalars(select(Transaction).where(Transaction.id.in_(tx_ids))).all():
+            txns[tx.id] = tx
+    return agents, txns
+
+
 @router.get("", response_model=list[ApprovalRead])
 def list_approvals(
     status_filter: str = "pending",
@@ -100,7 +122,8 @@ def list_approvals(
     if agent_id:
         stmt = stmt.where(Approval.agent_id == agent_id)
     rows = db.scalars(stmt.order_by(Approval.created_at.desc()).limit(200)).all()
-    return [_to_read(db, a) for a in rows]
+    agents, txns = _batch_load_related(db, list(rows))
+    return [_to_read(a, agents, txns) for a in rows]
 
 
 def _decide(
@@ -127,7 +150,8 @@ def _decide(
         tx.status = outcome
     db.commit()
     db.refresh(approval)
-    return _to_read(db, approval)
+    agents, txns = _batch_load_related(db, [approval])
+    return _to_read(approval, agents, txns)
 
 
 @router.post("/{approval_id}/approve", response_model=ApprovalRead)
